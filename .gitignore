@@ -65,10 +65,14 @@ artifacts/**
 reports/figures/**
 !artifacts/.gitkeep
 !reports/figures/.gitkeep
+!reports/figures/eda/
+!reports/figures/eda/target_balance.png
+!reports/figures/eda/missingness.png
+!reports/figures/eda/selected_distributions.png
+!reports/figures/eda/delinquency_distributions.png
 *.joblib
 *.pkl
 *.pickle
 *.pt
 *.pth
 *.onnx
-

@@ -11,6 +11,12 @@ import pandas as pd
 
 from ml_risk_control.data.contracts import FileContract, RawDataContracts
 
+AGE_MIN_WARNING_THRESHOLD = 18
+AGE_MAX_WARNING_THRESHOLD = 100
+REVOLVING_UTILIZATION_WARNING_THRESHOLD = 1.0
+DEBT_RATIO_WARNING_THRESHOLD = 5.0
+DELINQUENCY_COUNT_WARNING_THRESHOLD = 20
+
 
 def sha256_for_file(path: Path) -> str:
     """Return the SHA-256 checksum for a local file."""
@@ -60,6 +66,88 @@ def validate_exact_columns(
         ],
         "optional_columns_present": [column for column in actual if column in optional_columns],
     }
+
+
+def build_data_quality_flags(dataframe: pd.DataFrame) -> dict[str, Any]:
+    """Return warning-level data quality counts derived from the EDA baseline."""
+    flags: dict[str, Any] = {}
+
+    if "age" in dataframe.columns:
+        flags["age_below_18_count"] = int(dataframe["age"].lt(AGE_MIN_WARNING_THRESHOLD).sum())
+        flags["age_above_100_count"] = int(dataframe["age"].gt(AGE_MAX_WARNING_THRESHOLD).sum())
+
+    if "RevolvingUtilizationOfUnsecuredLines" in dataframe.columns:
+        flags["revolving_utilization_above_1_count"] = int(
+            dataframe["RevolvingUtilizationOfUnsecuredLines"]
+            .gt(REVOLVING_UTILIZATION_WARNING_THRESHOLD)
+            .sum()
+        )
+
+    if "DebtRatio" in dataframe.columns:
+        flags["debt_ratio_above_5_count"] = int(
+            dataframe["DebtRatio"].gt(DEBT_RATIO_WARNING_THRESHOLD).sum()
+        )
+
+    if "MonthlyIncome" in dataframe.columns:
+        non_missing_income = dataframe["MonthlyIncome"].dropna()
+        flags["monthly_income_non_positive_count"] = int(non_missing_income.le(0).sum())
+
+    if "NumberOfDependents" in dataframe.columns:
+        non_missing_dependents = dataframe["NumberOfDependents"].dropna()
+        flags["dependents_negative_count"] = int(non_missing_dependents.lt(0).sum())
+
+    delinquency_columns = [
+        "NumberOfTime30-59DaysPastDueNotWorse",
+        "NumberOfTime60-89DaysPastDueNotWorse",
+        "NumberOfTimes90DaysLate",
+    ]
+    available_delinquency_columns = [
+        column for column in delinquency_columns if column in dataframe.columns
+    ]
+    if available_delinquency_columns:
+        flags["delinquency_count_above_20"] = {
+            column: int(dataframe[column].gt(DELINQUENCY_COUNT_WARNING_THRESHOLD).sum())
+            for column in available_delinquency_columns
+        }
+
+    return flags
+
+
+def append_data_quality_warnings(result: dict[str, Any], flags: dict[str, Any]) -> None:
+    """Translate structured data quality counts into warning messages."""
+    result["data_quality_flags"] = flags
+
+    if flags.get("age_below_18_count", 0) > 0:
+        result["warnings"].append(
+            f"Detected {flags['age_below_18_count']} rows with age below 18."
+        )
+    if flags.get("age_above_100_count", 0) > 0:
+        result["warnings"].append(
+            f"Detected {flags['age_above_100_count']} rows with age above 100."
+        )
+    if flags.get("revolving_utilization_above_1_count", 0) > 0:
+        result["warnings"].append(
+            "Detected rows where revolving utilization exceeds 1.0."
+        )
+    if flags.get("debt_ratio_above_5_count", 0) > 0:
+        result["warnings"].append("Detected rows where debt ratio exceeds 5.0.")
+    if flags.get("monthly_income_non_positive_count", 0) > 0:
+        result["warnings"].append(
+            "Detected rows with non-positive monthly income values."
+        )
+    if flags.get("dependents_negative_count", 0) > 0:
+        result["warnings"].append("Detected rows with negative dependent counts.")
+
+    delinquency_flags = flags.get("delinquency_count_above_20", {})
+    delinquency_columns_with_warnings = [
+        column for column, count in delinquency_flags.items() if count > 0
+    ]
+    if delinquency_columns_with_warnings:
+        result["warnings"].append(
+            "Detected rows with unusually large delinquency counts in: "
+            + ", ".join(sorted(delinquency_columns_with_warnings))
+            + "."
+        )
 
 
 def validate_dataframe_contract(
@@ -129,6 +217,8 @@ def validate_dataframe_contract(
 
     if result["row_count"] == 0:
         result["errors"].append("File is empty.")
+
+    append_data_quality_warnings(result, build_data_quality_flags(dataframe))
 
     return result
 

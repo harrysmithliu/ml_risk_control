@@ -122,6 +122,7 @@ Once implementation is complete, the standard workflow will be exposed through M
 ```bash
 make setup
 make data
+make eda
 make train
 make evaluate
 make app
@@ -142,13 +143,60 @@ The final model bundle records the preprocessing pipeline, feature schema, model
 
 CI validates linting, unit and integration tests, a lightweight training smoke test, and the Docker build. Tests do not require live Snowflake credentials by default.
 
+## Exploratory Data Analysis
+
+The current repository includes a reproducible EDA workflow through `make eda`, structured summary output in `artifacts/eda/eda_summary.json`, warning-level data-quality checks in the validation layer, field-level treatment decisions for later feature engineering, and Snowflake DDL coverage for `RAW`, `CURATED`, `FEATURES`, and `SERVING`.
+
+The main EDA and data-foundation documents are:
+
+- [docs/EDA_SUMMARY.md](docs/EDA_SUMMARY.md)
+- [docs/FEATURE_TREATMENT_DECISIONS.md](docs/FEATURE_TREATMENT_DECISIONS.md)
+- [docs/DATA_QUALITY_RULES.md](docs/DATA_QUALITY_RULES.md)
+- [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md)
+- [docs/RUNBOOK.md](docs/RUNBOOK.md)
+
+### Current Readout
+
+The first EDA pass confirms three project-shaping facts:
+
+- the target is materially imbalanced at `6.684%`
+- missingness is concentrated in `MonthlyIncome` and `NumberOfDependents`
+- several numeric fields have heavy tails or suspicious extremes, especially `DebtRatio`, `RevolvingUtilizationOfUnsecuredLines`, and the delinquency count columns
+
+The generated chart outputs are versioned under `reports/figures/eda/`.
+
+Target class balance:
+
+![Target class balance](reports/figures/eda/target_balance.png)
+
+This confirms a strong class imbalance and reinforces the choice of PR-AUC and threshold-aware evaluation over raw accuracy.
+
+Missing value counts:
+
+![Missing value counts](reports/figures/eda/missingness.png)
+
+Missingness is concentrated rather than widespread, which supports explicit imputation plus missing-indicator treatment instead of broad column exclusion.
+
+Selected distributions (clipped at p99 in the rendered charts):
+
+![Selected distributions](reports/figures/eda/selected_distributions.png)
+
+The main readout is that `age` is broadly well-behaved, while `MonthlyIncome`, `DebtRatio`, and `RevolvingUtilizationOfUnsecuredLines` need bounded or transformed treatment before stable modeling.
+
+Delinquency count distributions:
+
+![Delinquency distributions](reports/figures/eda/delinquency_distributions.png)
+
+Most observations are concentrated at zero, but the extreme-value scan also identified a small cluster of implausibly large delinquency counts, which are now surfaced as warning-level data-quality findings.
+
 ## Documentation
 
-The complete scope, acceptance criteria, architecture, and implementation roadmap are defined in [docs/PROJECT_REQUIREMENTS.md](docs/PROJECT_REQUIREMENTS.md).
-
-Planned supporting documents include:
+Current supporting documents include:
 
 - `docs/DATA_DICTIONARY.md`
+- `docs/DATA_QUALITY_RULES.md`
+- `docs/EDA_SUMMARY.md`
+- `docs/FEATURE_TREATMENT_DECISIONS.md`
 - `docs/MODEL_CARD.md`
 - `docs/RUNBOOK.md`
 

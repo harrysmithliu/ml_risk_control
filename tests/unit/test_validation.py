@@ -107,6 +107,39 @@ def test_validate_file_contract_accepts_valid_training_file(tmp_path: Path) -> N
     assert report["id_is_unique"] is True
     assert report["target_is_binary"] is True
     assert report["target_summary"]["counts"] == {"0": 1, "1": 1}
+    assert report["data_quality_flags"]["age_below_18_count"] == 0
+    assert report["data_quality_flags"]["debt_ratio_above_5_count"] == 0
+
+
+def test_validate_file_contract_adds_warning_level_data_quality_flags(tmp_path: Path) -> None:
+    contracts = _build_contracts()
+    train_path = tmp_path / "cs-training.csv"
+    rows = _build_train_rows()
+    rows[0]["age"] = 17
+    rows[0]["DebtRatio"] = 6.5
+    rows[0]["RevolvingUtilizationOfUnsecuredLines"] = 1.4
+    rows[0]["MonthlyIncome"] = 0
+    rows[0]["NumberOfTime30-59DaysPastDueNotWorse"] = 30
+    rows[0]["NumberOfTimes90DaysLate"] = 25
+    _write_csv(train_path, rows)
+
+    report = validate_file_contract(train_path, contracts.train)
+
+    assert report["errors"] == []
+    assert report["data_quality_flags"]["age_below_18_count"] == 1
+    assert report["data_quality_flags"]["debt_ratio_above_5_count"] == 1
+    assert report["data_quality_flags"]["revolving_utilization_above_1_count"] == 1
+    assert report["data_quality_flags"]["monthly_income_non_positive_count"] == 1
+    assert report["data_quality_flags"]["delinquency_count_above_20"][
+        "NumberOfTime30-59DaysPastDueNotWorse"
+    ] == 1
+    assert report["data_quality_flags"]["delinquency_count_above_20"][
+        "NumberOfTimes90DaysLate"
+    ] == 1
+    assert "Detected 1 rows with age below 18." in report["warnings"]
+    assert "Detected rows where debt ratio exceeds 5.0." in report["warnings"]
+    assert "Detected rows where revolving utilization exceeds 1.0." in report["warnings"]
+    assert "Detected rows with non-positive monthly income values." in report["warnings"]
 
 
 def test_validate_file_contract_rejects_unlabeled_file_with_populated_target(tmp_path: Path) -> None:

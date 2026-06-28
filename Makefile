@@ -4,12 +4,13 @@ STREAMLIT ?= streamlit
 
 APP_ENTRY ?= app/Home.py
 DATA_SCRIPT ?= scripts/validate_raw_data.py
+EDA_SCRIPT ?= scripts/run_eda.py
 TRAIN_SCRIPT ?= scripts/train_xgboost.py
 EVALUATE_SCRIPT ?= scripts/evaluate_models.py
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup install lint format test smoke data train evaluate app clean
+.PHONY: help setup install lint format test smoke data eda train evaluate app clean
 
 help:
 	@printf "Available targets:\n"
@@ -20,6 +21,7 @@ help:
 	@printf "  test       Run the test suite\n"
 	@printf "  smoke      Run a lightweight import smoke test\n"
 	@printf "  data       Run raw data validation\n"
+	@printf "  eda        Run the initial exploratory data analysis pass\n"
 	@printf "  train      Run XGBoost model training\n"
 	@printf "  evaluate   Run evaluation and reporting\n"
 	@printf "  app        Start the Streamlit application\n"
@@ -49,6 +51,13 @@ data:
 		exit 1; \
 	fi
 	$(PYTHON) $(DATA_SCRIPT)
+
+eda:
+	@if [ ! -f "$(EDA_SCRIPT)" ]; then \
+		printf "Missing EDA entrypoint: %s\n" "$(EDA_SCRIPT)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(EDA_SCRIPT)
 
 train:
 	@if [ ! -f "$(TRAIN_SCRIPT)" ]; then \
