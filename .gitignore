@@ -1,0 +1,74 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Virtual environments and local environment variables
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test, coverage, and profiling output
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.prof
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local credentials and platform secrets
+kaggle.json
+.streamlit/secrets.toml
+connections.toml
+
+# Raw and generated datasets
+data/raw/**
+data/interim/**
+data/processed/**
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# Generated model artifacts and reports
+artifacts/**
+reports/figures/**
+!artifacts/.gitkeep
+!reports/figures/.gitkeep
+*.joblib
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.onnx
+
