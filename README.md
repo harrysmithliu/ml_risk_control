@@ -147,14 +147,6 @@ CI validates linting, unit and integration tests, a lightweight training smoke t
 
 The current repository includes a reproducible EDA workflow through `make eda`, structured summary output in `artifacts/eda/eda_summary.json`, warning-level data-quality checks in the validation layer, field-level treatment decisions for later feature engineering, and Snowflake DDL coverage for `RAW`, `CURATED`, `FEATURES`, and `SERVING`.
 
-The main EDA and data-foundation documents are:
-
-- [docs/EDA_SUMMARY.md](docs/EDA_SUMMARY.md)
-- [docs/FEATURE_TREATMENT_DECISIONS.md](docs/FEATURE_TREATMENT_DECISIONS.md)
-- [docs/DATA_QUALITY_RULES.md](docs/DATA_QUALITY_RULES.md)
-- [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md)
-- [docs/RUNBOOK.md](docs/RUNBOOK.md)
-
 ### Current Readout
 
 The first EDA pass confirms three project-shaping facts:
@@ -191,14 +183,18 @@ Most observations are concentrated at zero, but the extreme-value scan also iden
 
 ## Documentation
 
-Current supporting documents include:
+The operational data documents
 
-- `docs/DATA_DICTIONARY.md`
-- `docs/DATA_QUALITY_RULES.md`
-- `docs/EDA_SUMMARY.md`
-- `docs/FEATURE_TREATMENT_DECISIONS.md`
+- [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md)
+- [docs/RUNBOOK.md](docs/RUNBOOK.md)
+
+The main EDA and data-foundation documents
+
+- [docs/EDA_SUMMARY.md](docs/EDA_SUMMARY.md)
+- [docs/FEATURE_TREATMENT_DECISIONS.md](docs/FEATURE_TREATMENT_DECISIONS.md)
+- [docs/DATA_QUALITY_RULES.md](docs/DATA_QUALITY_RULES.md)
+
 - `docs/MODEL_CARD.md`
-- `docs/RUNBOOK.md`
 
 ## Limitations
 
