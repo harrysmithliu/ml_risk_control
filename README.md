@@ -181,6 +181,36 @@ Delinquency count distributions:
 
 Most observations are concentrated at zero, but the extreme-value scan also identified a small cluster of implausibly large delinquency counts, which are now surfaced as warning-level data-quality findings.
 
+## Current Model Diagnostics
+
+The current XGBoost workflow now persists evaluation-ready artifacts for validation curves, class-imbalance comparison, native feature importance, and permutation importance. The latest local run kept the `reference` candidate as the selected saved model after comparing it against both a bounded tuning search and an automatic `scale_pos_weight` variant.
+
+The artifact details and interpretation notes are documented in [docs/MODEL_ARTIFACTS.md](docs/MODEL_ARTIFACTS.md). The current versioned model figures are stored under `reports/figures/model/`.
+
+Validation Precision-Recall curve:
+
+![Validation Precision-Recall curve](reports/figures/model/pr_curve_validation.png)
+
+This is the primary model-selection view for the current project because serious delinquency is a minority-class outcome.
+
+Validation ROC curve:
+
+![Validation ROC curve](reports/figures/model/roc_curve_validation.png)
+
+This complements PR-AUC by showing global ranking quality across thresholds, but it is not the primary selection metric.
+
+Native XGBoost feature importance (`gain`):
+
+![Native XGBoost gain importance](reports/figures/model/native_importance_gain.png)
+
+This is retained as a fast diagnostic view, not as the final explanation layer on its own.
+
+Validation permutation importance:
+
+![Validation permutation importance](reports/figures/model/permutation_importance.png)
+
+This provides a more robust held-out importance readout than raw split-count or gain-based views alone.
+
 ## Documentation
 
 The operational data documents
@@ -193,6 +223,7 @@ The main EDA and data-foundation documents
 - [docs/EDA_SUMMARY.md](docs/EDA_SUMMARY.md)
 - [docs/FEATURE_TREATMENT_DECISIONS.md](docs/FEATURE_TREATMENT_DECISIONS.md)
 - [docs/DATA_QUALITY_RULES.md](docs/DATA_QUALITY_RULES.md)
+- [docs/MODEL_ARTIFACTS.md](docs/MODEL_ARTIFACTS.md)
 
 - `docs/MODEL_CARD.md`
 

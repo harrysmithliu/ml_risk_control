@@ -4,8 +4,14 @@ from ml_risk_control.models.baseline import (
     LogisticRegressionBaseline,
     LogisticRegressionBaselineConfig,
 )
+from ml_risk_control.models.xgboost_model import (
+    XGBoostCreditRiskModel,
+    XGBoostModelConfig,
+)
 
 __all__ = [
     "LogisticRegressionBaseline",
     "LogisticRegressionBaselineConfig",
+    "XGBoostCreditRiskModel",
+    "XGBoostModelConfig",
 ]

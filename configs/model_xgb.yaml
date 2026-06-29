@@ -1,0 +1,131 @@
+metadata:
+  model_name: xgboost_credit_risk
+  model_family: xgboost
+  model_role: champion_candidate
+  model_version: 0.1.0
+  schema_version: 1.0.0
+  stage: stage_4
+  owner: ml_risk_control
+
+runtime:
+  device: cpu
+  tree_method: hist
+  predictor: auto
+  n_jobs: -1
+  random_state: 42
+  verbosity: 1
+
+training:
+  objective: binary:logistic
+  eval_metric:
+    - aucpr
+    - auc
+    - logloss
+  early_stopping_rounds: 50
+  validation_strategy: fixed_validation_split
+  primary_selection_metric: average_precision
+  secondary_metrics:
+    - roc_auc
+    - ks_statistic
+    - brier_score
+    - precision
+    - recall
+    - f1
+  threshold: 0.5
+  probability_output: positive_class_probability
+
+reference_run:
+  enabled: true
+  description: cpu_safe_reference_candidate
+  params:
+    max_depth: 4
+    min_child_weight: 5
+    learning_rate: 0.05
+    n_estimators: 600
+    subsample: 0.8
+    colsample_bytree: 0.8
+    gamma: 0.0
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    max_delta_step: 0
+    scale_pos_weight: 1.0
+
+tuning:
+  enabled: true
+  strategy: randomized_search
+  description: bounded_stage_4_search
+  n_iter: 12
+  cv_folds: 3
+  refit_on_full_training_partition: false
+  use_validation_for_early_stopping: true
+  score_direction: maximize
+  scoring:
+    primary: average_precision
+    secondary:
+      - roc_auc
+      - ks_statistic
+  parameter_space:
+    max_depth:
+      values: [3, 4, 5, 6]
+    min_child_weight:
+      values: [1, 3, 5, 7]
+    learning_rate:
+      values: [0.03, 0.05, 0.08, 0.1]
+    n_estimators:
+      values: [300, 500, 700, 900]
+    subsample:
+      values: [0.7, 0.8, 0.9, 1.0]
+    colsample_bytree:
+      values: [0.7, 0.8, 0.9, 1.0]
+    gamma:
+      values: [0.0, 0.1, 0.3, 0.5]
+    reg_alpha:
+      values: [0.0, 0.01, 0.1, 1.0]
+    reg_lambda:
+      values: [0.5, 1.0, 2.0, 5.0]
+
+experiments:
+  class_imbalance:
+    run_original_distribution: true
+    run_scale_pos_weight_variant: true
+    scale_pos_weight_strategy: auto_from_train_ratio
+    scale_pos_weight_value: null
+    run_smote_variant: false
+    notes: imbalance_experiments_are_deferred_to_stage_5
+
+artifacts:
+  output_dir: artifacts/xgboost
+  model_file: xgboost_credit_risk.joblib
+  config_snapshot_file: xgboost_config_snapshot.json
+  feature_schema_file: feature_schema.json
+  split_metadata_file: split_metadata.json
+  metrics_file: xgboost_metrics.json
+  tuning_results_file: tuning_results.json
+  run_summary_file: run_summary.json
+  evaluation_rows:
+    - train
+    - validation
+    - test
+
+diagnostics:
+  export_native_importance: true
+  native_importance_types:
+    - gain
+    - weight
+    - cover
+  save_learning_curve: true
+  learning_curve_file: learning_curve.json
+  save_curves: true
+  curves_file: curves.json
+  save_feature_importance_report: true
+  feature_importance_file: native_feature_importance.json
+  save_permutation_importance: true
+  permutation_importance_file: permutation_importance.json
+  permutation_importance_scoring: average_precision
+  permutation_importance_repeats: 5
+
+guardrails:
+  allow_final_test_set_for_search: false
+  require_finite_probabilities: true
+  require_complete_metadata: true
+  require_reload_check: true

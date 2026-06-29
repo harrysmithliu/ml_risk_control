@@ -12,9 +12,11 @@ from sklearn.metrics import (
     brier_score_loss,
     confusion_matrix,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
+    roc_curve,
 )
 
 
@@ -126,6 +128,61 @@ def build_confusion_matrix_payload(
     }
 
 
+def build_precision_recall_curve_payload(
+    y_true: pd.Series | list[int] | np.ndarray,
+    y_score: pd.Series | list[float] | np.ndarray,
+) -> dict[str, Any]:
+    """Return precision-recall curve arrays for downstream plotting."""
+    target = _to_numeric_series(y_true, name="y_true").astype(int)
+    scores = _to_numeric_series(y_score, name="y_score").astype(float)
+    _validate_binary_target(target)
+    _validate_probability_scores(scores)
+
+    if len(target) != len(scores):
+        msg = "y_true and y_score must have the same number of rows."
+        raise ValueError(msg)
+
+    precision, recall, thresholds = precision_recall_curve(target, scores)
+    positive_rate = float((target == 1).mean())
+    return {
+        "point_count": int(len(precision)),
+        "threshold_count": int(len(thresholds)),
+        "baseline_positive_rate": positive_rate,
+        "precision": precision.astype(float).tolist(),
+        "recall": recall.astype(float).tolist(),
+        "thresholds": thresholds.astype(float).tolist(),
+    }
+
+
+def build_roc_curve_payload(
+    y_true: pd.Series | list[int] | np.ndarray,
+    y_score: pd.Series | list[float] | np.ndarray,
+) -> dict[str, Any]:
+    """Return ROC curve arrays for downstream plotting."""
+    target = _to_numeric_series(y_true, name="y_true").astype(int)
+    scores = _to_numeric_series(y_score, name="y_score").astype(float)
+    _validate_binary_target(target)
+    _validate_probability_scores(scores)
+
+    if len(target) != len(scores):
+        msg = "y_true and y_score must have the same number of rows."
+        raise ValueError(msg)
+
+    distinct_classes = set(target.unique().tolist())
+    if distinct_classes != {0, 1}:
+        msg = "ROC curve requires both negative and positive classes to be present."
+        raise ValueError(msg)
+
+    false_positive_rate, true_positive_rate, thresholds = roc_curve(target, scores)
+    return {
+        "point_count": int(len(false_positive_rate)),
+        "threshold_count": int(len(thresholds)),
+        "false_positive_rate": false_positive_rate.astype(float).tolist(),
+        "true_positive_rate": true_positive_rate.astype(float).tolist(),
+        "thresholds": thresholds.astype(float).tolist(),
+    }
+
+
 def evaluate_binary_classifier(
     y_true: pd.Series | list[int] | np.ndarray,
     y_score: pd.Series | list[float] | np.ndarray,
@@ -163,5 +220,7 @@ def evaluate_binary_classifier(
         "recall": float(recall_score(target, predicted_labels, zero_division=0)),
         "f1": float(f1_score(target, predicted_labels, zero_division=0)),
         "confusion_matrix": confusion,
+        "precision_recall_curve": build_precision_recall_curve_payload(target, scores),
+        "roc_curve": build_roc_curve_payload(target, scores),
     }
     return metrics

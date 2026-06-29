@@ -70,6 +70,11 @@ reports/figures/**
 !reports/figures/eda/missingness.png
 !reports/figures/eda/selected_distributions.png
 !reports/figures/eda/delinquency_distributions.png
+!reports/figures/model/
+!reports/figures/model/pr_curve_validation.png
+!reports/figures/model/roc_curve_validation.png
+!reports/figures/model/native_importance_gain.png
+!reports/figures/model/permutation_importance.png
 *.joblib
 *.pkl
 *.pickle

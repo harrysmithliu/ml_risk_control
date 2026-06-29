@@ -5,6 +5,8 @@ import pytest
 from ml_risk_control.evaluation.metrics import (
     build_confusion_matrix_payload,
     compute_ks_statistic,
+    build_precision_recall_curve_payload,
+    build_roc_curve_payload,
     evaluate_binary_classifier,
 )
 
@@ -50,6 +52,40 @@ def test_build_confusion_matrix_payload_rejects_non_binary_predictions() -> None
         )
 
 
+def test_build_precision_recall_curve_payload_returns_plot_ready_arrays() -> None:
+    payload = build_precision_recall_curve_payload(
+        y_true=[0, 0, 1, 1],
+        y_score=[0.10, 0.20, 0.80, 0.90],
+    )
+
+    assert payload["point_count"] == 5
+    assert payload["threshold_count"] == 4
+    assert payload["baseline_positive_rate"] == pytest.approx(0.5)
+    assert payload["precision"][0] == pytest.approx(0.5)
+    assert payload["recall"][0] == pytest.approx(1.0)
+    assert payload["thresholds"] == pytest.approx([0.1, 0.2, 0.8, 0.9])
+
+
+def test_build_roc_curve_payload_returns_plot_ready_arrays() -> None:
+    payload = build_roc_curve_payload(
+        y_true=[0, 0, 1, 1],
+        y_score=[0.10, 0.20, 0.80, 0.90],
+    )
+
+    assert payload["point_count"] >= 3
+    assert payload["threshold_count"] == payload["point_count"]
+    assert payload["false_positive_rate"][0] == pytest.approx(0.0)
+    assert payload["true_positive_rate"][-1] == pytest.approx(1.0)
+
+
+def test_build_roc_curve_payload_rejects_single_class_targets() -> None:
+    with pytest.raises(ValueError, match="requires both negative and positive classes"):
+        build_roc_curve_payload(
+            y_true=[1, 1, 1],
+            y_score=[0.5, 0.6, 0.7],
+        )
+
+
 def test_evaluate_binary_classifier_returns_stage_3_metric_bundle() -> None:
     y_true = [0, 0, 1, 1, 0, 1]
     y_score = [0.10, 0.30, 0.80, 0.90, 0.40, 0.70]
@@ -68,6 +104,8 @@ def test_evaluate_binary_classifier_returns_stage_3_metric_bundle() -> None:
     assert metrics["recall"] == pytest.approx(1.0)
     assert metrics["f1"] == pytest.approx(1.0)
     assert metrics["confusion_matrix"]["counts"]["matrix"] == [[3, 0], [0, 3]]
+    assert metrics["precision_recall_curve"]["baseline_positive_rate"] == pytest.approx(0.5)
+    assert metrics["roc_curve"]["false_positive_rate"][0] == pytest.approx(0.0)
 
 
 def test_evaluate_binary_classifier_respects_threshold_for_predicted_labels() -> None:
