@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -352,6 +353,618 @@ def _resolve_scale_pos_weight_value(
     }
 
 
+def _build_synthetic_identifier_series(
+    *,
+    id_series: pd.Series,
+    synthetic_count: int,
+) -> pd.Series:
+    if synthetic_count <= 0:
+        return pd.Series([], dtype=id_series.dtype)
+
+    if pd.api.types.is_numeric_dtype(id_series):
+        return pd.Series(
+            [-1 * (index + 1) for index in range(synthetic_count)],
+            dtype=id_series.dtype,
+        )
+
+    return pd.Series(
+        [f"synthetic_{index + 1}" for index in range(synthetic_count)],
+        dtype="object",
+    )
+
+
+def _apply_smote_to_training_frame(
+    *,
+    train_frame: pd.DataFrame,
+    target_column: str,
+    id_column: str,
+    class_imbalance_payload: dict[str, Any],
+    random_state: int,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    try:
+        from imblearn.over_sampling import SMOTE
+    except ImportError as error:
+        msg = "imbalanced-learn is required to run the SMOTE experiment."
+        raise ImportError(msg) from error
+
+    sampling_strategy = class_imbalance_payload.get("smote_sampling_strategy", "auto")
+    configured_k_neighbors = int(class_imbalance_payload.get("smote_k_neighbors", 5))
+    if configured_k_neighbors <= 0:
+        msg = "smote_k_neighbors must be positive."
+        raise ValueError(msg)
+
+    target_series = pd.to_numeric(train_frame[target_column], errors="raise").astype(int)
+    positive_count_before = int((target_series == 1).sum())
+    negative_count_before = int((target_series == 0).sum())
+    if positive_count_before <= 1:
+        msg = "SMOTE requires at least two positive training examples."
+        raise ValueError(msg)
+    if negative_count_before <= 0:
+        msg = "SMOTE requires at least one negative training example."
+        raise ValueError(msg)
+
+    effective_k_neighbors = min(configured_k_neighbors, positive_count_before - 1)
+    if effective_k_neighbors <= 0:
+        msg = "SMOTE could not determine a valid k_neighbors value."
+        raise ValueError(msg)
+
+    feature_columns = [
+        column
+        for column in train_frame.columns
+        if column not in {target_column, id_column}
+    ]
+    if not feature_columns:
+        msg = "SMOTE experiment requires at least one feature column."
+        raise ValueError(msg)
+
+    smote_features = train_frame.loc[:, feature_columns].copy()
+    for column in smote_features.columns:
+        smote_features[column] = pd.to_numeric(smote_features[column], errors="coerce")
+        if smote_features[column].isna().any():
+            median_value = smote_features[column].median()
+            fill_value = 0.0 if pd.isna(median_value) else float(median_value)
+            smote_features[column] = smote_features[column].fillna(fill_value)
+
+    sampler = SMOTE(
+        sampling_strategy=sampling_strategy,
+        random_state=random_state,
+        k_neighbors=effective_k_neighbors,
+    )
+    resampled_features, resampled_target = sampler.fit_resample(smote_features, target_series)
+    resampled_features_frame = pd.DataFrame(resampled_features, columns=feature_columns)
+    resampled_target_series = pd.Series(resampled_target, name=target_column)
+
+    original_row_count = int(len(train_frame))
+    resampled_row_count = int(len(resampled_features_frame))
+    synthetic_row_count = resampled_row_count - original_row_count
+    if synthetic_row_count < 0:
+        msg = "SMOTE returned fewer rows than the original training frame."
+        raise ValueError(msg)
+
+    if synthetic_row_count == 0:
+        positive_count_after = int((resampled_target_series == 1).sum())
+        negative_count_after = int((resampled_target_series == 0).sum())
+        return train_frame.reset_index(drop=True), {
+            "sampling_strategy": sampling_strategy,
+            "configured_k_neighbors": configured_k_neighbors,
+            "effective_k_neighbors": effective_k_neighbors,
+            "random_state": random_state,
+            "synthetic_row_count": synthetic_row_count,
+            "train_distribution_before": {
+                "positive_count": positive_count_before,
+                "negative_count": negative_count_before,
+                "positive_rate": positive_count_before / (positive_count_before + negative_count_before),
+            },
+            "train_distribution_after": {
+                "positive_count": positive_count_after,
+                "negative_count": negative_count_after,
+                "positive_rate": positive_count_after / (positive_count_after + negative_count_after),
+            },
+        }
+
+    synthetic_features = resampled_features_frame.iloc[original_row_count:].reset_index(drop=True)
+    synthetic_target = resampled_target_series.iloc[original_row_count:].reset_index(drop=True)
+    synthetic_frame = synthetic_features.copy()
+    synthetic_frame[target_column] = synthetic_target
+    synthetic_frame[id_column] = _build_synthetic_identifier_series(
+        id_series=train_frame[id_column],
+        synthetic_count=synthetic_row_count,
+    ).values
+    synthetic_frame = synthetic_frame.loc[:, train_frame.columns]
+
+    resampled_train_frame = pd.concat(
+        [train_frame.reset_index(drop=True), synthetic_frame],
+        ignore_index=True,
+    )
+    positive_count_after = int((resampled_train_frame[target_column] == 1).sum())
+    negative_count_after = int((resampled_train_frame[target_column] == 0).sum())
+    return resampled_train_frame, {
+        "sampling_strategy": sampling_strategy,
+        "configured_k_neighbors": configured_k_neighbors,
+        "effective_k_neighbors": effective_k_neighbors,
+        "random_state": random_state,
+        "synthetic_row_count": synthetic_row_count,
+        "train_distribution_before": {
+            "positive_count": positive_count_before,
+            "negative_count": negative_count_before,
+            "positive_rate": positive_count_before / (positive_count_before + negative_count_before),
+        },
+        "train_distribution_after": {
+            "positive_count": positive_count_after,
+            "negative_count": negative_count_after,
+            "positive_rate": positive_count_after / (positive_count_after + negative_count_after),
+        },
+    }
+
+
+def _split_train_for_calibration(
+    *,
+    train_frame: pd.DataFrame,
+    target_column: str,
+    calibration_size: float,
+    random_state: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if not 0.0 < calibration_size < 1.0:
+        msg = "calibration_size must be bounded within (0, 1)."
+        raise ValueError(msg)
+
+    from sklearn.model_selection import train_test_split
+
+    target_series = pd.to_numeric(train_frame[target_column], errors="raise").astype(int)
+    fit_frame, calibration_frame = train_test_split(
+        train_frame,
+        test_size=calibration_size,
+        random_state=random_state,
+        stratify=target_series,
+    )
+    fit_frame = fit_frame.reset_index(drop=True)
+    calibration_frame = calibration_frame.reset_index(drop=True)
+    return fit_frame, calibration_frame, {
+        "strategy": "train_holdout",
+        "calibration_size": float(calibration_size),
+        "random_state": random_state,
+        "fit_row_count": int(len(fit_frame)),
+        "calibration_row_count": int(len(calibration_frame)),
+        "fit_positive_rate": float((fit_frame[target_column] == 1).mean()),
+        "calibration_positive_rate": float((calibration_frame[target_column] == 1).mean()),
+    }
+
+
+def _fit_probability_calibrator(
+    *,
+    raw_scores: pd.Series,
+    y_true: pd.Series,
+    method: str,
+    random_state: int,
+) -> dict[str, Any]:
+    calibration_target = pd.to_numeric(y_true, errors="raise").astype(int).reset_index(drop=True)
+    calibration_scores = pd.to_numeric(raw_scores, errors="raise").astype(float).reset_index(drop=True)
+    if len(calibration_target) != len(calibration_scores):
+        msg = "Calibration target and scores must have the same number of rows."
+        raise ValueError(msg)
+
+    if method == "isotonic":
+        from sklearn.isotonic import IsotonicRegression
+
+        calibrator = IsotonicRegression(out_of_bounds="clip")
+        calibrator.fit(calibration_scores, calibration_target)
+        return {
+            "method": method,
+            "model": calibrator,
+        }
+
+    if method == "sigmoid":
+        from sklearn.linear_model import LogisticRegression
+
+        calibrator = LogisticRegression(
+            random_state=random_state,
+            max_iter=1000,
+        )
+        calibrator.fit(calibration_scores.to_frame(name="raw_score"), calibration_target)
+        return {
+            "method": method,
+            "model": calibrator,
+        }
+
+    msg = f"Unsupported calibration method: {method}"
+    raise ValueError(msg)
+
+
+def _apply_probability_calibrator(
+    *,
+    calibrator_bundle: dict[str, Any],
+    raw_scores: pd.Series,
+) -> pd.Series:
+    calibration_scores = pd.to_numeric(raw_scores, errors="raise").astype(float).reset_index(drop=True)
+    method = calibrator_bundle["method"]
+    calibrator = calibrator_bundle["model"]
+
+    if method == "isotonic":
+        probabilities = calibrator.predict(calibration_scores)
+    elif method == "sigmoid":
+        probabilities = calibrator.predict_proba(calibration_scores.to_frame(name="raw_score"))[:, 1]
+    else:
+        msg = f"Unsupported calibration method: {method}"
+        raise ValueError(msg)
+
+    return pd.Series(probabilities, index=raw_scores.index, name="calibrated_probability")
+
+
+def _build_calibration_report(
+    *,
+    model: Any,
+    calibrator_bundle: dict[str, Any],
+    evaluation_frames: dict[str, pd.DataFrame],
+    target_column: str,
+    evaluate_binary_classifier: Any,
+    threshold: float,
+    selected_candidate_source: str | None,
+    calibration_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    partition_reports: dict[str, Any] = {}
+    for partition_name, frame in evaluation_frames.items():
+        raw_scores = model.predict_proba(frame)
+        calibrated_scores = _apply_probability_calibrator(
+            calibrator_bundle=calibrator_bundle,
+            raw_scores=raw_scores,
+        )
+        partition_reports[partition_name] = {
+            "row_count": int(len(frame)),
+            "positive_rate": float((frame[target_column] == 1).mean()),
+            "raw": evaluate_binary_classifier(
+                frame[target_column],
+                raw_scores,
+                threshold=threshold,
+            ),
+            "calibrated": evaluate_binary_classifier(
+                frame[target_column],
+                calibrated_scores,
+                threshold=threshold,
+            ),
+        }
+
+    return {
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "selected_candidate_source": selected_candidate_source,
+        "calibration": {
+            **calibration_metadata,
+            "method": calibrator_bundle["method"],
+        },
+        "partitions": partition_reports,
+    }
+
+
+def _build_threshold_candidate_grid(
+    *,
+    scores: pd.Series,
+    max_candidates: int,
+) -> list[float]:
+    if max_candidates <= 1:
+        msg = "max_candidates must be greater than 1."
+        raise ValueError(msg)
+
+    numeric_scores = pd.to_numeric(scores, errors="raise").astype(float)
+    if numeric_scores.empty:
+        msg = "Threshold selection requires non-empty score values."
+        raise ValueError(msg)
+
+    quantile_positions = np.linspace(0.0, 1.0, max_candidates)
+    candidate_values = np.quantile(numeric_scores.to_numpy(), quantile_positions)
+    threshold_values = sorted(
+        {
+            float(np.clip(value, 0.0, 1.0))
+            for value in candidate_values.tolist() + [0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
+        }
+    )
+    return threshold_values
+
+
+def _select_operating_threshold(
+    *,
+    y_true: pd.Series,
+    y_score: pd.Series,
+    evaluate_binary_classifier: Any,
+    objective_metric: str,
+    min_precision: float | None,
+    min_recall: float | None,
+    max_candidates: int,
+) -> dict[str, Any]:
+    threshold_grid = _build_threshold_candidate_grid(
+        scores=y_score,
+        max_candidates=max_candidates,
+    )
+
+    candidate_reports: list[dict[str, Any]] = []
+    feasible_candidates: list[dict[str, Any]] = []
+    for threshold in threshold_grid:
+        metrics = evaluate_binary_classifier(
+            y_true,
+            y_score,
+            threshold=float(threshold),
+        )
+        objective_value = _get_metric_value(metrics, objective_metric)
+        candidate_report = {
+            "threshold": float(threshold),
+            "objective_metric": objective_metric,
+            "objective_value": float(objective_value),
+            "precision": float(metrics["precision"]),
+            "recall": float(metrics["recall"]),
+            "f1": float(metrics["f1"]),
+            "average_precision": float(metrics["average_precision"]),
+            "roc_auc": float(metrics["roc_auc"]),
+            "brier_score": float(metrics["brier_score"]),
+            "metrics": metrics,
+        }
+        candidate_reports.append(candidate_report)
+
+        precision_ok = min_precision is None or candidate_report["precision"] >= min_precision
+        recall_ok = min_recall is None or candidate_report["recall"] >= min_recall
+        if precision_ok and recall_ok:
+            feasible_candidates.append(candidate_report)
+
+    search_pool = feasible_candidates if feasible_candidates else candidate_reports
+    recommended = max(
+        search_pool,
+        key=lambda row: (
+            row["objective_value"],
+            row["recall"],
+            -row["threshold"],
+        ),
+    )
+    search_status = "constraints_satisfied" if feasible_candidates else "constraints_not_met"
+    leaderboard = sorted(
+        search_pool,
+        key=lambda row: (
+            row["objective_value"],
+            row["recall"],
+            -row["threshold"],
+        ),
+        reverse=True,
+    )[:10]
+
+    return {
+        "status": search_status,
+        "objective_metric": objective_metric,
+        "min_precision": min_precision,
+        "min_recall": min_recall,
+        "candidate_count": int(len(candidate_reports)),
+        "feasible_candidate_count": int(len(feasible_candidates)),
+        "recommended_threshold": float(recommended["threshold"]),
+        "recommended_metrics": recommended["metrics"],
+        "leaderboard": [
+            {
+                "threshold": float(item["threshold"]),
+                "objective_value": float(item["objective_value"]),
+                "precision": float(item["precision"]),
+                "recall": float(item["recall"]),
+                "f1": float(item["f1"]),
+                "average_precision": float(item["average_precision"]),
+                "roc_auc": float(item["roc_auc"]),
+                "brier_score": float(item["brier_score"]),
+            }
+            for item in leaderboard
+        ],
+    }
+
+
+def _build_threshold_selection_report(
+    *,
+    model: Any,
+    calibrator_bundle: dict[str, Any] | None,
+    validation_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    target_column: str,
+    evaluate_binary_classifier: Any,
+    objective_metric: str,
+    score_source: str,
+    min_precision: float | None,
+    min_recall: float | None,
+    max_candidates: int,
+    selected_candidate_source: str | None,
+) -> dict[str, Any]:
+    validation_raw_scores = model.predict_proba(validation_frame)
+    test_raw_scores = model.predict_proba(test_frame)
+
+    if score_source == "raw":
+        validation_scores = validation_raw_scores
+        test_scores = test_raw_scores
+    elif score_source == "calibrated":
+        if calibrator_bundle is None:
+            msg = "Threshold selection requested calibrated scores, but no calibrator is available."
+            raise ValueError(msg)
+        validation_scores = _apply_probability_calibrator(
+            calibrator_bundle=calibrator_bundle,
+            raw_scores=validation_raw_scores,
+        )
+        test_scores = _apply_probability_calibrator(
+            calibrator_bundle=calibrator_bundle,
+            raw_scores=test_raw_scores,
+        )
+    else:
+        msg = f"Unsupported threshold selection score source: {score_source}"
+        raise ValueError(msg)
+
+    validation_result = _select_operating_threshold(
+        y_true=validation_frame[target_column],
+        y_score=validation_scores,
+        evaluate_binary_classifier=evaluate_binary_classifier,
+        objective_metric=objective_metric,
+        min_precision=min_precision,
+        min_recall=min_recall,
+        max_candidates=max_candidates,
+    )
+    recommended_threshold = validation_result["recommended_threshold"]
+    test_metrics = evaluate_binary_classifier(
+        test_frame[target_column],
+        test_scores,
+        threshold=recommended_threshold,
+    )
+    return {
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "selected_candidate_source": selected_candidate_source,
+        "score_source": score_source,
+        "validation_selection": validation_result,
+        "test_recommended_threshold_metrics": test_metrics,
+    }
+
+
+def _compute_business_cost(
+    *,
+    metrics: dict[str, Any],
+    false_positive_cost: float,
+    false_negative_cost: float,
+    true_positive_benefit: float,
+    true_negative_benefit: float,
+) -> dict[str, float]:
+    confusion_counts = metrics["confusion_matrix"]["counts"]
+    fp = float(confusion_counts["fp"])
+    fn = float(confusion_counts["fn"])
+    tp = float(confusion_counts["tp"])
+    tn = float(confusion_counts["tn"])
+    total_rows = float(metrics["row_count"])
+
+    total_cost = (
+        fp * false_positive_cost
+        + fn * false_negative_cost
+        - tp * true_positive_benefit
+        - tn * true_negative_benefit
+    )
+    average_cost_per_row = total_cost / total_rows if total_rows > 0 else total_cost
+    return {
+        "total_cost": float(total_cost),
+        "average_cost_per_row": float(average_cost_per_row),
+        "false_positive_cost": float(false_positive_cost),
+        "false_negative_cost": float(false_negative_cost),
+        "true_positive_benefit": float(true_positive_benefit),
+        "true_negative_benefit": float(true_negative_benefit),
+    }
+
+
+def _build_cost_analysis_report(
+    *,
+    model: Any,
+    calibrator_bundle: dict[str, Any] | None,
+    validation_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    target_column: str,
+    evaluate_binary_classifier: Any,
+    score_source: str,
+    false_positive_cost: float,
+    false_negative_cost: float,
+    true_positive_benefit: float,
+    true_negative_benefit: float,
+    max_candidates: int,
+    selected_candidate_source: str | None,
+) -> dict[str, Any]:
+    validation_raw_scores = model.predict_proba(validation_frame)
+    test_raw_scores = model.predict_proba(test_frame)
+
+    if score_source == "raw":
+        validation_scores = validation_raw_scores
+        test_scores = test_raw_scores
+    elif score_source == "calibrated":
+        if calibrator_bundle is None:
+            msg = "Cost analysis requested calibrated scores, but no calibrator is available."
+            raise ValueError(msg)
+        validation_scores = _apply_probability_calibrator(
+            calibrator_bundle=calibrator_bundle,
+            raw_scores=validation_raw_scores,
+        )
+        test_scores = _apply_probability_calibrator(
+            calibrator_bundle=calibrator_bundle,
+            raw_scores=test_raw_scores,
+        )
+    else:
+        msg = f"Unsupported cost-analysis score source: {score_source}"
+        raise ValueError(msg)
+
+    threshold_grid = _build_threshold_candidate_grid(
+        scores=validation_scores,
+        max_candidates=max_candidates,
+    )
+    candidate_rows: list[dict[str, Any]] = []
+    for threshold in threshold_grid:
+        validation_metrics = evaluate_binary_classifier(
+            validation_frame[target_column],
+            validation_scores,
+            threshold=float(threshold),
+        )
+        validation_cost = _compute_business_cost(
+            metrics=validation_metrics,
+            false_positive_cost=false_positive_cost,
+            false_negative_cost=false_negative_cost,
+            true_positive_benefit=true_positive_benefit,
+            true_negative_benefit=true_negative_benefit,
+        )
+        candidate_rows.append(
+            {
+                "threshold": float(threshold),
+                "validation_metrics": validation_metrics,
+                "validation_cost": validation_cost,
+            }
+        )
+
+    recommended_candidate = min(
+        candidate_rows,
+        key=lambda row: (
+            row["validation_cost"]["average_cost_per_row"],
+            -row["validation_metrics"]["recall"],
+            row["threshold"],
+        ),
+    )
+    recommended_threshold = float(recommended_candidate["threshold"])
+    test_metrics = evaluate_binary_classifier(
+        test_frame[target_column],
+        test_scores,
+        threshold=recommended_threshold,
+    )
+    test_cost = _compute_business_cost(
+        metrics=test_metrics,
+        false_positive_cost=false_positive_cost,
+        false_negative_cost=false_negative_cost,
+        true_positive_benefit=true_positive_benefit,
+        true_negative_benefit=true_negative_benefit,
+    )
+    leaderboard = sorted(
+        candidate_rows,
+        key=lambda row: (
+            row["validation_cost"]["average_cost_per_row"],
+            -row["validation_metrics"]["recall"],
+            row["threshold"],
+        ),
+    )[:10]
+    return {
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "selected_candidate_source": selected_candidate_source,
+        "score_source": score_source,
+        "cost_matrix": {
+            "false_positive_cost": float(false_positive_cost),
+            "false_negative_cost": float(false_negative_cost),
+            "true_positive_benefit": float(true_positive_benefit),
+            "true_negative_benefit": float(true_negative_benefit),
+        },
+        "validation_selection": {
+            "candidate_count": int(len(candidate_rows)),
+            "recommended_threshold": recommended_threshold,
+            "recommended_validation_metrics": recommended_candidate["validation_metrics"],
+            "recommended_validation_cost": recommended_candidate["validation_cost"],
+            "leaderboard": [
+                {
+                    "threshold": float(item["threshold"]),
+                    "average_cost_per_row": float(item["validation_cost"]["average_cost_per_row"]),
+                    "total_cost": float(item["validation_cost"]["total_cost"]),
+                    "precision": float(item["validation_metrics"]["precision"]),
+                    "recall": float(item["validation_metrics"]["recall"]),
+                    "f1": float(item["validation_metrics"]["f1"]),
+                }
+                for item in leaderboard
+            ],
+        },
+        "test_recommended_threshold_metrics": test_metrics,
+        "test_recommended_threshold_cost": test_cost,
+    }
+
+
 def _compute_permutation_importance(
     *,
     model: Any,
@@ -597,6 +1210,9 @@ def main() -> int:
     diagnostics = config_payload.get("diagnostics", {})
     guardrails = config_payload.get("guardrails", {})
     tuning_section = config_payload.get("tuning", {})
+    calibration_section = config_payload.get("calibration", {})
+    threshold_selection_section = config_payload.get("threshold_selection", {})
+    cost_analysis_section = config_payload.get("cost_analysis", {})
     reference_run = config_payload.get("reference_run", {})
     experiments_section = config_payload.get("experiments", {})
     class_imbalance_section = experiments_section.get("class_imbalance", {})
@@ -682,10 +1298,11 @@ def main() -> int:
     scale_pos_weight_enabled = bool(
         class_imbalance_section.get("run_scale_pos_weight_variant", False)
     )
+    smote_enabled = bool(class_imbalance_section.get("run_smote_variant", False))
     tuning_enabled = bool(tuning_section.get("enabled", False))
-    if not reference_enabled and not tuning_enabled and not scale_pos_weight_enabled:
+    if not reference_enabled and not tuning_enabled and not scale_pos_weight_enabled and not smote_enabled:
         print(
-            "ERROR: Reference, scale_pos_weight experiment, and tuning are all disabled; no XGBoost candidate can be trained.",
+            "ERROR: Reference, scale_pos_weight experiment, SMOTE experiment, and tuning are all disabled; no XGBoost candidate can be trained.",
             file=sys.stderr,
         )
         return 1
@@ -693,6 +1310,7 @@ def main() -> int:
     selected_model = None
     selected_candidate_source = None
     selected_validation_score = None
+    selected_candidate_recipe = None
     reference_candidate_result = None
     reference_validation_metrics = None
     reference_validation_score = None
@@ -731,6 +1349,11 @@ def main() -> int:
         selected_model = reference_model
         selected_candidate_source = "reference"
         selected_validation_score = reference_validation_score
+        selected_candidate_recipe = {
+            "base_config_payload": dict(base_config_payload),
+            "candidate_params": {},
+            "train_variant": "original",
+        }
 
     tuning_results_payload = {
         "generated_at_utc": datetime.now(UTC).isoformat(),
@@ -744,6 +1367,7 @@ def main() -> int:
             "status": "not_run",
             "selected_candidate_source": selected_candidate_source,
             "scale_pos_weight_variant": None,
+            "smote_variant": None,
         },
         "search": None,
     }
@@ -805,6 +1429,13 @@ def main() -> int:
             selected_model = scale_pos_weight_model
             selected_candidate_source = "scale_pos_weight_variant"
             selected_validation_score = scale_pos_weight_score
+            selected_candidate_recipe = {
+                "base_config_payload": dict(base_config_payload),
+                "candidate_params": {
+                    "scale_pos_weight": scale_pos_weight_details["value"],
+                },
+                "train_variant": "original",
+            }
 
         tuning_results_payload["class_imbalance_experiments"] = {
             "status": "completed",
@@ -822,7 +1453,76 @@ def main() -> int:
                     },
                 },
             ),
+            "smote_variant": None,
         }
+
+    if smote_enabled:
+        try:
+            smote_train_frame, smote_details = _apply_smote_to_training_frame(
+                train_frame=partitions.train,
+                target_column=settings.training.target_column,
+                id_column=settings.training.id_column,
+                class_imbalance_payload=class_imbalance_section,
+                random_state=split_random_state,
+            )
+            (
+                smote_model,
+                smote_validation_metrics,
+                smote_candidate_result,
+            ) = _train_candidate(
+                candidate_name="smote_variant",
+                candidate_params={},
+                base_config_payload=base_config_payload,
+                model_class=XGBoostCreditRiskModel,
+                model_config_class=XGBoostModelConfig,
+                settings=settings,
+                model_version=str(model_version),
+                schema_version=str(schema_version),
+                native_importance_types=native_importance_types,
+                train_frame=smote_train_frame,
+                validation_frame=partitions.validation,
+                evaluate_binary_classifier=evaluate_binary_classifier,
+                threshold=threshold,
+                verbose=args.verbose,
+            )
+        except (ImportError, ValueError) as error:
+            print(
+                "ERROR: SMOTE experiment could not be completed.",
+                file=sys.stderr,
+            )
+            print(f"DETAIL: {error}", file=sys.stderr)
+            return 1
+
+        smote_score = _get_metric_value(
+            smote_validation_metrics,
+            selection_metric,
+        )
+        if (
+            selected_validation_score is None
+            or _is_better_score(
+                smote_score,
+                selected_validation_score,
+                direction=score_direction,
+            )
+        ):
+            selected_model = smote_model
+            selected_candidate_source = "smote_variant"
+            selected_validation_score = smote_score
+            selected_candidate_recipe = {
+                "base_config_payload": dict(base_config_payload),
+                "candidate_params": {},
+                "train_variant": "smote",
+            }
+
+        if tuning_results_payload["class_imbalance_experiments"]["status"] == "not_run":
+            tuning_results_payload["class_imbalance_experiments"]["status"] = "completed"
+        tuning_results_payload["class_imbalance_experiments"]["smote_variant"] = (
+            _build_candidate_summary(
+                smote_candidate_result,
+                metric_names=comparison_metric_names,
+                extra_fields=smote_details,
+            )
+        )
 
     if tuning_enabled:
         if guardrails.get("allow_final_test_set_for_search", False):
@@ -947,9 +1647,17 @@ def main() -> int:
                     selected_model = best_tuned_model
                     selected_candidate_source = "tuned_search"
                     selected_validation_score = best_tuned_score
+                    selected_candidate_recipe = {
+                        "base_config_payload": dict(base_config_payload),
+                        "candidate_params": dict(best_tuned_result["params"]),
+                        "train_variant": "original",
+                    }
 
     if selected_model is None:
         print("ERROR: No XGBoost candidate was trained successfully.", file=sys.stderr)
+        return 1
+    if selected_candidate_recipe is None:
+        print("ERROR: Selected candidate recipe is missing.", file=sys.stderr)
         return 1
 
     tuning_results_payload["selected_candidate_source"] = selected_candidate_source
@@ -998,6 +1706,135 @@ def main() -> int:
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "native_importance": selected_model.export_native_importance(),
     }
+    calibration_report_payload = None
+    calibrator_bundle = None
+    if calibration_section.get("enabled", False):
+        calibration_size = float(calibration_section.get("calibration_size", 0.2))
+        calibration_random_state = int(
+            calibration_section.get("random_state", split_random_state)
+        )
+        calibration_method = str(calibration_section.get("method", "sigmoid"))
+        try:
+            calibration_fit_frame, calibration_holdout_frame, calibration_metadata = (
+                _split_train_for_calibration(
+                    train_frame=partitions.train,
+                    target_column=settings.training.target_column,
+                    calibration_size=calibration_size,
+                    random_state=calibration_random_state,
+                )
+            )
+            calibration_train_frame = calibration_fit_frame
+            if selected_candidate_recipe["train_variant"] == "smote":
+                calibration_train_frame, calibration_smote_details = _apply_smote_to_training_frame(
+                    train_frame=calibration_fit_frame,
+                    target_column=settings.training.target_column,
+                    id_column=settings.training.id_column,
+                    class_imbalance_payload=class_imbalance_section,
+                    random_state=calibration_random_state,
+                )
+                calibration_metadata["smote_training_variant"] = calibration_smote_details
+
+            calibration_model, _, _ = _train_candidate(
+                candidate_name="calibration_candidate",
+                candidate_params=dict(selected_candidate_recipe["candidate_params"]),
+                base_config_payload=dict(selected_candidate_recipe["base_config_payload"]),
+                model_class=XGBoostCreditRiskModel,
+                model_config_class=XGBoostModelConfig,
+                settings=settings,
+                model_version=str(model_version),
+                schema_version=str(schema_version),
+                native_importance_types=native_importance_types,
+                train_frame=calibration_train_frame,
+                validation_frame=partitions.validation,
+                evaluate_binary_classifier=evaluate_binary_classifier,
+                threshold=threshold,
+                verbose=args.verbose,
+            )
+            calibration_raw_scores = calibration_model.predict_proba(calibration_holdout_frame)
+            calibrator_bundle = _fit_probability_calibrator(
+                raw_scores=calibration_raw_scores,
+                y_true=calibration_holdout_frame[settings.training.target_column],
+                method=calibration_method,
+                random_state=calibration_random_state,
+            )
+            calibration_report_payload = _build_calibration_report(
+                model=calibration_model,
+                calibrator_bundle=calibrator_bundle,
+                evaluation_frames={
+                    "calibration_holdout": calibration_holdout_frame,
+                    "validation": partitions.validation,
+                    "test": partitions.test,
+                },
+                target_column=settings.training.target_column,
+                evaluate_binary_classifier=evaluate_binary_classifier,
+                threshold=threshold,
+                selected_candidate_source=selected_candidate_source,
+                calibration_metadata=calibration_metadata,
+            )
+        except (ImportError, ValueError) as error:
+            print("ERROR: Calibration workflow could not be completed.", file=sys.stderr)
+            print(f"DETAIL: {error}", file=sys.stderr)
+            return 1
+    threshold_selection_payload = None
+    if threshold_selection_section.get("enabled", False):
+        threshold_score_source = str(threshold_selection_section.get("score_source", "raw"))
+        threshold_objective_metric = str(threshold_selection_section.get("objective_metric", "f1"))
+        threshold_min_precision = threshold_selection_section.get("min_precision")
+        threshold_min_recall = threshold_selection_section.get("min_recall")
+        threshold_max_candidates = int(threshold_selection_section.get("max_candidates", 201))
+        threshold_min_precision_value = (
+            None if threshold_min_precision is None else float(threshold_min_precision)
+        )
+        threshold_min_recall_value = (
+            None if threshold_min_recall is None else float(threshold_min_recall)
+        )
+        try:
+            threshold_selection_payload = _build_threshold_selection_report(
+                model=selected_model,
+                calibrator_bundle=calibrator_bundle,
+                validation_frame=partitions.validation,
+                test_frame=partitions.test,
+                target_column=settings.training.target_column,
+                evaluate_binary_classifier=evaluate_binary_classifier,
+                objective_metric=threshold_objective_metric,
+                score_source=threshold_score_source,
+                min_precision=threshold_min_precision_value,
+                min_recall=threshold_min_recall_value,
+                max_candidates=threshold_max_candidates,
+                selected_candidate_source=selected_candidate_source,
+            )
+        except ValueError as error:
+            print("ERROR: Threshold selection workflow could not be completed.", file=sys.stderr)
+            print(f"DETAIL: {error}", file=sys.stderr)
+            return 1
+    cost_analysis_payload = None
+    if cost_analysis_section.get("enabled", False):
+        cost_score_source = str(cost_analysis_section.get("score_source", "raw"))
+        false_positive_cost = float(cost_analysis_section.get("false_positive_cost", 1.0))
+        false_negative_cost = float(cost_analysis_section.get("false_negative_cost", 5.0))
+        true_positive_benefit = float(cost_analysis_section.get("true_positive_benefit", 0.0))
+        true_negative_benefit = float(cost_analysis_section.get("true_negative_benefit", 0.0))
+        cost_max_candidates = int(cost_analysis_section.get("max_candidates", 201))
+        try:
+            cost_analysis_payload = _build_cost_analysis_report(
+                model=selected_model,
+                calibrator_bundle=calibrator_bundle,
+                validation_frame=partitions.validation,
+                test_frame=partitions.test,
+                target_column=settings.training.target_column,
+                evaluate_binary_classifier=evaluate_binary_classifier,
+                score_source=cost_score_source,
+                false_positive_cost=false_positive_cost,
+                false_negative_cost=false_negative_cost,
+                true_positive_benefit=true_positive_benefit,
+                true_negative_benefit=true_negative_benefit,
+                max_candidates=cost_max_candidates,
+                selected_candidate_source=selected_candidate_source,
+            )
+        except ValueError as error:
+            print("ERROR: Cost analysis workflow could not be completed.", file=sys.stderr)
+            print(f"DETAIL: {error}", file=sys.stderr)
+            return 1
     permutation_importance_payload = None
     if diagnostics.get("save_permutation_importance", True):
         permutation_importance_metric = str(
@@ -1057,6 +1894,15 @@ def main() -> int:
     permutation_importance_path = output_dir / str(
         diagnostics.get("permutation_importance_file", "permutation_importance.json")
     )
+    calibration_report_path = output_dir / str(
+        calibration_section.get("artifact_file", "calibration_report.json")
+    )
+    threshold_selection_path = output_dir / str(
+        threshold_selection_section.get("artifact_file", "threshold_selection_report.json")
+    )
+    cost_analysis_path = output_dir / str(
+        cost_analysis_section.get("artifact_file", "cost_analysis_report.json")
+    )
 
     selected_model.save(model_artifact_path)
 
@@ -1101,6 +1947,12 @@ def main() -> int:
         _write_json(native_importance_path, native_importance_payload)
     if diagnostics.get("save_permutation_importance", True) and permutation_importance_payload is not None:
         _write_json(permutation_importance_path, permutation_importance_payload)
+    if calibration_section.get("enabled", False) and calibration_report_payload is not None:
+        _write_json(calibration_report_path, calibration_report_payload)
+    if threshold_selection_section.get("enabled", False) and threshold_selection_payload is not None:
+        _write_json(threshold_selection_path, threshold_selection_payload)
+    if cost_analysis_section.get("enabled", False) and cost_analysis_payload is not None:
+        _write_json(cost_analysis_path, cost_analysis_payload)
 
     print("XGBoost training completed.")
     print(f"Model artifact: {model_artifact_path}")
@@ -1112,6 +1964,12 @@ def main() -> int:
         print(f"Curves: {curves_path}")
     if diagnostics.get("save_permutation_importance", True):
         print(f"Permutation importance: {permutation_importance_path}")
+    if calibration_section.get("enabled", False):
+        print(f"Calibration report: {calibration_report_path}")
+    if threshold_selection_section.get("enabled", False):
+        print(f"Threshold selection report: {threshold_selection_path}")
+    if cost_analysis_section.get("enabled", False):
+        print(f"Cost analysis report: {cost_analysis_path}")
     print(f"Selected candidate source: {selected_candidate_source}")
     print(
         "Validation PR-AUC: "

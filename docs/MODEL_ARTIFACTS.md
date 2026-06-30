@@ -1,14 +1,15 @@
-# Model Artifacts and Explainability Outputs
+# Model Artifacts and Evaluation Outputs
 
 This document describes the current XGBoost training outputs under `artifacts/xgboost/`, how they should be interpreted, and which files are intended for downstream reporting and Streamlit visualization.
 
 ## Scope
 
-The current artifact set covers four areas:
+The current artifact set covers five areas:
 
 - reproducible model persistence
 - evaluation metrics and diagnostic curves
-- class-imbalance experimentation with `scale_pos_weight`
+- class-imbalance experimentation with `scale_pos_weight` and SMOTE
+- calibration, threshold selection, and cost-based operating-point analysis
 - model explainability through both native XGBoost importance and permutation importance
 
 These outputs are designed to remain lightweight while preserving a clean path toward richer model serving and UI integration.
@@ -35,6 +36,12 @@ The current training run writes the following files to `artifacts/xgboost/`:
   - validation-based permutation importance report
 - `tuning_results.json`
   - reference candidate, bounded search candidates, class-imbalance experiment results, and selected-candidate decisions
+- `calibration_report.json`
+  - raw-versus-calibrated probability comparison for the strongest selected candidate
+- `threshold_selection_report.json`
+  - validation-driven threshold recommendation and downstream test readout
+- `cost_analysis_report.json`
+  - business-cost-based threshold recommendation and downstream test readout
 - `run_summary.json`
   - final run metadata, selected model source, and artifact reload check
 - `xgboost_config_snapshot.json`
@@ -46,6 +53,7 @@ The training workflow currently evaluates multiple candidate paths:
 
 - reference candidate
 - `scale_pos_weight` variant
+- `smote_variant`
 - bounded randomized-search tuning candidates
 
 Candidate selection is driven by a common validation metric:
@@ -57,13 +65,20 @@ This means all candidate paths are compared under the same ranking rule before d
 
 ## Current class-imbalance treatment
 
-The current implementation adds a lightweight first-pass treatment for class imbalance through `scale_pos_weight`.
+The current implementation now covers three imbalance-aware modeling paths:
+
+- original class distribution
+- `scale_pos_weight`
+- SMOTE
 
 Configuration lives in `configs/model_xgb.yaml` under:
 
 - `experiments.class_imbalance.run_scale_pos_weight_variant`
 - `experiments.class_imbalance.scale_pos_weight_strategy`
 - `experiments.class_imbalance.scale_pos_weight_value`
+- `experiments.class_imbalance.run_smote_variant`
+- `experiments.class_imbalance.smote_sampling_strategy`
+- `experiments.class_imbalance.smote_k_neighbors`
 
 The default strategy is:
 
@@ -91,6 +106,82 @@ This section includes:
 - whether the imbalance-aware candidate was selected
 
 For the latest local run, the `scale_pos_weight` variant completed successfully but did not outperform the reference candidate on validation `average_precision`, so the final selected model remained the reference candidate.
+
+SMOTE is also now wired into the same comparison framework. It is applied only to the training partition, never to validation or test data. The latest local run produced:
+
+- synthetic rows: `90964`
+- train distribution before SMOTE: `7018` positive / `97982` negative
+- train distribution after SMOTE: `97982` positive / `97982` negative
+
+This SMOTE variant underperformed the reference candidate on validation `average_precision`, so it was not selected as the saved model.
+
+## Calibration and operating-point artifacts
+
+Stage 5 adds three model-governance outputs beyond the basic metric bundle.
+
+### 1. Calibration report
+
+File:
+
+- `calibration_report.json`
+
+This report compares raw and calibrated probabilities for the strongest selected candidate. The current implementation uses:
+
+- strategy: `train_holdout`
+- method: `sigmoid`
+
+The calibration model is fitted on a holdout slice carved out of the training partition, which preserves the main validation partition for threshold and cost analysis.
+
+For the latest local run, calibration completed successfully but did not improve Brier score on validation or test, so calibration is currently best treated as an evaluated option rather than an adopted serving default.
+
+### 2. Threshold selection report
+
+File:
+
+- `threshold_selection_report.json`
+
+This report selects an operating threshold on validation data using a configurable objective metric. The current configuration uses:
+
+- score source: `raw`
+- objective metric: `f1`
+
+For the latest local run, the recommended threshold was:
+
+- `0.19963`
+
+At that threshold, the validation readout was approximately:
+
+- precision: `0.402509`
+- recall: `0.511968`
+- f1: `0.450688`
+
+### 3. Cost analysis report
+
+File:
+
+- `cost_analysis_report.json`
+
+This report chooses a threshold by minimizing expected business cost on validation data using a simple configurable cost matrix.
+
+The current local configuration uses:
+
+- false positive cost: `1.0`
+- false negative cost: `5.0`
+- true positive benefit: `0.0`
+- true negative benefit: `0.0`
+
+For the latest local run, the cost-optimal threshold was:
+
+- `0.137047`
+
+At that threshold, the validation readout was approximately:
+
+- precision: `0.337778`
+- recall: `0.606383`
+- f1: `0.433873`
+- average cost per row: `0.211022`
+
+This threshold is lower than the F1-oriented threshold because the configured business assumption penalizes false negatives more heavily than false positives.
 
 ## Explainability layers
 
@@ -165,7 +256,7 @@ Current structure:
 - `partitions.test.precision_recall_curve`
 - `partitions.test.roc_curve`
 
-The following four PNGs can already be produced manually from the current artifact set:
+The following six PNGs can now be produced from the current artifact set through `scripts/render_model_figures.py`:
 
 1. validation Precision-Recall curve
    - source: `curves.json`
@@ -175,8 +266,12 @@ The following four PNGs can already be produced manually from the current artifa
    - source: `native_feature_importance.json`
 4. permutation-importance bar chart
    - source: `permutation_importance.json`
+5. validation threshold-selection chart
+   - source: `threshold_selection_report.json`
+6. validation cost-analysis chart
+   - source: `cost_analysis_report.json`
 
-The repository already includes plotting-capable dependencies such as `matplotlib` and `seaborn`, so a manual notebook, ad hoc Python snippet, or dedicated rendering script can generate these figures today.
+The repository already includes plotting-capable dependencies such as `matplotlib` and `seaborn`, and the rendering script writes these files into `reports/figures/model/`.
 
 ## Reload and reproducibility guardrails
 
@@ -203,9 +298,9 @@ Use the following files for downstream consumers:
 
 | Consumer | Primary files |
 | --- | --- |
-| Streamlit charts | `curves.json`, `native_feature_importance.json`, `permutation_importance.json` |
+| Streamlit charts | `curves.json`, `native_feature_importance.json`, `permutation_importance.json`, `threshold_selection_report.json`, `cost_analysis_report.json` |
 | Model registry summary | `run_summary.json`, `xgboost_config_snapshot.json`, `feature_schema.json` |
-| Experiment review | `tuning_results.json`, `xgboost_metrics.json` |
+| Experiment review | `tuning_results.json`, `xgboost_metrics.json`, `calibration_report.json` |
 | Split auditing | `split_metadata.json` |
 | Training diagnostics | `learning_curve.json` |
 
@@ -213,9 +308,9 @@ Use the following files for downstream consumers:
 
 The current artifact set does not yet include:
 
-- pre-rendered PNG figures committed by the training script
 - SHAP-based explainability outputs
-- threshold-recommendation artifacts
-- SMOTE-based training variants
+- correlation-cluster sensitivity analysis
+- explanation stability summaries across folds or seeds
+- a final production decision to serve calibrated probabilities instead of raw probabilities
 
-Those remain possible extensions, but they are not required for the current Stage 4 model-training closure.
+Those remain possible extensions, but they are not required for the current Stage 5 model-selection closure.

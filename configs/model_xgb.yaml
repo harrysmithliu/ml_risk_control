@@ -34,6 +34,33 @@ training:
   threshold: 0.5
   probability_output: positive_class_probability
 
+calibration:
+  enabled: true
+  strategy: train_holdout
+  method: sigmoid
+  calibration_size: 0.2
+  random_state: 42
+  artifact_file: calibration_report.json
+
+threshold_selection:
+  enabled: true
+  score_source: raw
+  objective_metric: f1
+  min_precision: null
+  min_recall: null
+  max_candidates: 201
+  artifact_file: threshold_selection_report.json
+
+cost_analysis:
+  enabled: true
+  score_source: raw
+  false_positive_cost: 1.0
+  false_negative_cost: 5.0
+  true_positive_benefit: 0.0
+  true_negative_benefit: 0.0
+  max_candidates: 201
+  artifact_file: cost_analysis_report.json
+
 reference_run:
   enabled: true
   description: cpu_safe_reference_candidate
@@ -90,8 +117,10 @@ experiments:
     run_scale_pos_weight_variant: true
     scale_pos_weight_strategy: auto_from_train_ratio
     scale_pos_weight_value: null
-    run_smote_variant: false
-    notes: imbalance_experiments_are_deferred_to_stage_5
+    run_smote_variant: true
+    smote_sampling_strategy: auto
+    smote_k_neighbors: 5
+    notes: smote_is_applied_only_to_the_training_partition
 
 artifacts:
   output_dir: artifacts/xgboost

@@ -114,6 +114,7 @@ def _write_config(
     *,
     include_tuning: bool = False,
     include_scale_pos_weight: bool = False,
+    include_smote: bool = False,
 ) -> None:
     lines = [
         "metadata:",
@@ -127,6 +128,30 @@ def _write_config(
         "  eval_metric: [aucpr, auc, logloss]",
         "  early_stopping_rounds: 25",
         "  threshold: 0.4",
+        "calibration:",
+        "  enabled: true",
+        "  strategy: train_holdout",
+        "  method: isotonic",
+        "  calibration_size: 0.2",
+        "  random_state: 42",
+        "  artifact_file: calibration_report.json",
+        "threshold_selection:",
+        "  enabled: true",
+        "  score_source: raw",
+        "  objective_metric: f1",
+        "  min_precision: null",
+        "  min_recall: null",
+        "  max_candidates: 21",
+        "  artifact_file: threshold_selection_report.json",
+        "cost_analysis:",
+        "  enabled: true",
+        "  score_source: raw",
+        "  false_positive_cost: 1.0",
+        "  false_negative_cost: 5.0",
+        "  true_positive_benefit: 0.0",
+        "  true_negative_benefit: 0.0",
+        "  max_candidates: 21",
+        "  artifact_file: cost_analysis_report.json",
         "reference_run:",
         "  params:",
         "    max_depth: 4",
@@ -162,6 +187,18 @@ def _write_config(
                 "    run_scale_pos_weight_variant: true",
                 "    scale_pos_weight_strategy: auto_from_train_ratio",
                 "    run_smote_variant: false",
+            ]
+        )
+    if include_smote:
+        lines.extend(
+            [
+                "experiments:",
+                "  class_imbalance:",
+                "    run_original_distribution: true",
+                "    run_scale_pos_weight_variant: false",
+                "    run_smote_variant: true",
+                "    smote_sampling_strategy: auto",
+                "    smote_k_neighbors: 1",
             ]
         )
     lines.extend(
@@ -361,7 +398,13 @@ def _fake_evaluate_binary_classifier(y_true, y_score, *, threshold: float):
         "recall": 0.80,
         "f1": 0.73,
         "confusion_matrix": {
-            "counts": {"matrix": [[1, 0], [0, 1]]},
+            "counts": {
+                "tn": 1,
+                "fp": 0,
+                "fn": 0,
+                "tp": 1,
+                "matrix": [[1, 0], [0, 1]],
+            },
         },
         "precision_recall_curve": {
             "point_count": 3,
@@ -402,7 +445,13 @@ def _fake_evaluate_binary_classifier_from_scores(y_true, y_score, *, threshold: 
         "recall": 0.80,
         "f1": 0.73,
         "confusion_matrix": {
-            "counts": {"matrix": [[1, 0], [0, 1]]},
+            "counts": {
+                "tn": 1,
+                "fp": 0,
+                "fn": 0,
+                "tp": 1,
+                "matrix": [[1, 0], [0, 1]],
+            },
         },
         "precision_recall_curve": {
             "point_count": 3,
@@ -468,6 +517,9 @@ def test_train_xgboost_main_writes_expected_artifacts(monkeypatch, tmp_path: Pat
     assert (output_dir / "curves.json").exists()
     assert (output_dir / "native_feature_importance.json").exists()
     assert (output_dir / "permutation_importance.json").exists()
+    assert (output_dir / "calibration_report.json").exists()
+    assert (output_dir / "threshold_selection_report.json").exists()
+    assert (output_dir / "cost_analysis_report.json").exists()
     assert (output_dir / "tuning_results.json").exists()
     assert (output_dir / "xgboost_config_snapshot.json").exists()
 
@@ -480,6 +532,15 @@ def test_train_xgboost_main_writes_expected_artifacts(monkeypatch, tmp_path: Pat
     curves_payload = json.loads((output_dir / "curves.json").read_text())
     permutation_importance_payload = json.loads(
         (output_dir / "permutation_importance.json").read_text()
+    )
+    calibration_report_payload = json.loads(
+        (output_dir / "calibration_report.json").read_text()
+    )
+    threshold_selection_payload = json.loads(
+        (output_dir / "threshold_selection_report.json").read_text()
+    )
+    cost_analysis_payload = json.loads(
+        (output_dir / "cost_analysis_report.json").read_text()
     )
 
     assert feature_schema_payload["feature_schema"]["schema_version"] == "1.1.0"
@@ -501,6 +562,20 @@ def test_train_xgboost_main_writes_expected_artifacts(monkeypatch, tmp_path: Pat
     assert permutation_importance_payload["n_repeats"] == 3
     assert len(permutation_importance_payload["features"]) == 2
     assert permutation_importance_payload["features"][0]["feature_name"] in {"MonthlyIncome", "DebtRatio"}
+    assert calibration_report_payload["selected_candidate_source"] == "reference"
+    assert calibration_report_payload["calibration"]["method"] == "isotonic"
+    assert calibration_report_payload["partitions"]["validation"]["raw"]["average_precision"] == 0.62
+    assert calibration_report_payload["partitions"]["test"]["calibrated"]["roc_auc"] == 0.79
+    assert threshold_selection_payload["selected_candidate_source"] == "reference"
+    assert threshold_selection_payload["score_source"] == "raw"
+    assert threshold_selection_payload["validation_selection"]["objective_metric"] == "f1"
+    assert "recommended_threshold" in threshold_selection_payload["validation_selection"]
+    assert threshold_selection_payload["test_recommended_threshold_metrics"]["roc_auc"] == 0.79
+    assert cost_analysis_payload["selected_candidate_source"] == "reference"
+    assert cost_analysis_payload["score_source"] == "raw"
+    assert cost_analysis_payload["cost_matrix"]["false_negative_cost"] == 5.0
+    assert "recommended_threshold" in cost_analysis_payload["validation_selection"]
+    assert cost_analysis_payload["test_recommended_threshold_metrics"]["roc_auc"] == 0.79
 
 
 def test_train_xgboost_main_selects_tuned_candidate_when_search_improves_metric(
@@ -649,6 +724,125 @@ def test_train_xgboost_main_selects_scale_pos_weight_variant_when_it_improves_me
             "train_distribution"
         ]["positive_count"]
         == 2
+    )
+
+
+def test_train_xgboost_main_selects_smote_variant_when_it_improves_metric(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_train_xgboost_module()
+    output_dir = tmp_path / "custom_output"
+    config_path = tmp_path / "model_xgb.yaml"
+    training_data = _build_training_dataframe()
+    _write_config(config_path, include_smote=True)
+
+    class SmoteAwareFakeXGBoostCreditRiskModel(FakeXGBoostCreditRiskModel):
+        def fit(self, dataframe: pd.DataFrame, *, eval_dataframe: pd.DataFrame | None = None, verbose: bool = False):
+            self.was_smote_variant_ = len(dataframe) > 6
+            return super().fit(dataframe, eval_dataframe=eval_dataframe, verbose=verbose)
+
+        def predict_proba(self, dataframe: pd.DataFrame) -> pd.Series:
+            if getattr(self, "was_smote_variant_", False):
+                positive_score = 0.94
+                negative_score = 0.18
+            else:
+                positive_score = 0.68
+                negative_score = 0.36
+            values = [
+                positive_score if value == 1 else negative_score
+                for value in dataframe[self.target_column].tolist()
+            ]
+            return pd.Series(values, index=dataframe.index, name="predicted_probability")
+
+    def _fake_apply_smote_to_training_frame(
+        *,
+        train_frame: pd.DataFrame,
+        target_column: str,
+        id_column: str,
+        class_imbalance_payload,
+        random_state: int,
+    ):
+        del class_imbalance_payload, random_state
+        positive_rows = train_frame.loc[train_frame[target_column] == 1].copy().reset_index(drop=True)
+        synthetic_rows = positive_rows.copy()
+        synthetic_rows[id_column] = [
+            -1 * (index + 1)
+            for index in range(len(synthetic_rows))
+        ]
+        resampled_frame = pd.concat([train_frame, synthetic_rows], ignore_index=True)
+        return resampled_frame, {
+            "sampling_strategy": "auto",
+            "configured_k_neighbors": 1,
+            "effective_k_neighbors": 1,
+            "random_state": 42,
+            "synthetic_row_count": int(len(synthetic_rows)),
+            "train_distribution_before": {
+                "positive_count": int((train_frame[target_column] == 1).sum()),
+                "negative_count": int((train_frame[target_column] == 0).sum()),
+                "positive_rate": float((train_frame[target_column] == 1).mean()),
+            },
+            "train_distribution_after": {
+                "positive_count": int((resampled_frame[target_column] == 1).sum()),
+                "negative_count": int((resampled_frame[target_column] == 0).sum()),
+                "positive_rate": float((resampled_frame[target_column] == 1).mean()),
+            },
+        }
+
+    monkeypatch.setattr(
+        module,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            output_dir=output_dir,
+            threshold=None,
+            model_version=None,
+            schema_version=None,
+            verbose=False,
+        ),
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: _build_settings(tmp_path))
+    monkeypatch.setattr(module, "build_repository", lambda settings: FakeRepository(training_data))
+    monkeypatch.setattr(module, "_apply_smote_to_training_frame", _fake_apply_smote_to_training_frame)
+    monkeypatch.setattr(
+        module,
+        "_load_training_modules",
+        lambda: (
+            _fake_evaluate_binary_classifier_from_scores,
+            FakeSplitConfig,
+            _fake_build_split_metadata,
+            _fake_split_training_data,
+            (SmoteAwareFakeXGBoostCreditRiskModel, FakeXGBoostModelConfig),
+        ),
+    )
+
+    result = module.main()
+
+    assert result == 0
+    metrics_payload = json.loads((output_dir / "xgboost_metrics.json").read_text())
+    run_summary_payload = json.loads((output_dir / "run_summary.json").read_text())
+    tuning_results_payload = json.loads((output_dir / "tuning_results.json").read_text())
+
+    assert metrics_payload["selected_candidate_source"] == "smote_variant"
+    assert run_summary_payload["selected_candidate_source"] == "smote_variant"
+    assert tuning_results_payload["class_imbalance_experiments"]["status"] == "completed"
+    assert (
+        tuning_results_payload["class_imbalance_experiments"]["selected_candidate_source"]
+        == "smote_variant"
+    )
+    assert (
+        tuning_results_payload["class_imbalance_experiments"]["smote_variant"][
+            "synthetic_row_count"
+        ]
+        >= 1
+    )
+    assert (
+        tuning_results_payload["class_imbalance_experiments"]["smote_variant"][
+            "train_distribution_after"
+        ]["positive_count"]
+        > tuning_results_payload["class_imbalance_experiments"]["smote_variant"][
+            "train_distribution_before"
+        ]["positive_count"]
     )
 
 

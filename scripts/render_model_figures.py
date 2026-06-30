@@ -71,10 +71,14 @@ def _validate_positive_int(value: int, *, name: str) -> None:
         raise ValueError(msg)
 
 
-def _load_required_artifacts(artifact_dir: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def _load_required_artifacts(
+    artifact_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     curves_path = artifact_dir / "curves.json"
     native_importance_path = artifact_dir / "native_feature_importance.json"
     permutation_importance_path = artifact_dir / "permutation_importance.json"
+    threshold_selection_path = artifact_dir / "threshold_selection_report.json"
+    cost_analysis_path = artifact_dir / "cost_analysis_report.json"
 
     missing_paths = [
         path
@@ -90,6 +94,8 @@ def _load_required_artifacts(artifact_dir: Path) -> tuple[dict[str, Any], dict[s
         _read_json(curves_path),
         _read_json(native_importance_path),
         _read_json(permutation_importance_path),
+        _read_json(threshold_selection_path) if threshold_selection_path.exists() else None,
+        _read_json(cost_analysis_path) if cost_analysis_path.exists() else None,
     )
 
 
@@ -247,19 +253,109 @@ def _plot_permutation_importance(
     plt.close(fig)
 
 
+def _plot_threshold_selection(
+    *,
+    payload: dict[str, Any],
+    output_path: Path,
+) -> None:
+    validation_selection = payload.get("validation_selection", {})
+    leaderboard = validation_selection.get("leaderboard", [])
+    if not leaderboard:
+        msg = "Threshold selection payload does not contain leaderboard rows."
+        raise ValueError(msg)
+
+    frame = pd.DataFrame(leaderboard).sort_values("threshold")
+    recommended_threshold = float(validation_selection["recommended_threshold"])
+    objective_metric = validation_selection.get("objective_metric", "metric")
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.plot(frame["threshold"], frame["objective_value"], color="#2563eb", linewidth=2, label=objective_metric)
+    if "precision" in frame.columns:
+        ax.plot(frame["threshold"], frame["precision"], color="#059669", linewidth=1.5, label="precision")
+    if "recall" in frame.columns:
+        ax.plot(frame["threshold"], frame["recall"], color="#dc2626", linewidth=1.5, label="recall")
+    if "f1" in frame.columns and objective_metric != "f1":
+        ax.plot(frame["threshold"], frame["f1"], color="#7c3aed", linewidth=1.5, label="f1")
+    ax.axvline(
+        recommended_threshold,
+        color="#111827",
+        linestyle="--",
+        linewidth=1.5,
+        label=f"recommended = {recommended_threshold:.4f}",
+    )
+    ax.set_title("Threshold Selection (Validation)")
+    ax.set_xlabel("Threshold")
+    ax.set_ylabel("Metric value")
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.05)
+    ax.grid(alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def _plot_cost_analysis(
+    *,
+    payload: dict[str, Any],
+    output_path: Path,
+) -> None:
+    validation_selection = payload.get("validation_selection", {})
+    leaderboard = validation_selection.get("leaderboard", [])
+    if not leaderboard:
+        msg = "Cost analysis payload does not contain leaderboard rows."
+        raise ValueError(msg)
+
+    frame = pd.DataFrame(leaderboard).sort_values("threshold")
+    recommended_threshold = float(validation_selection["recommended_threshold"])
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.plot(
+        frame["threshold"],
+        frame["average_cost_per_row"],
+        color="#dc2626",
+        linewidth=2,
+        label="average cost per row",
+    )
+    if "recall" in frame.columns:
+        ax.plot(frame["threshold"], frame["recall"], color="#059669", linewidth=1.5, label="recall")
+    ax.axvline(
+        recommended_threshold,
+        color="#111827",
+        linestyle="--",
+        linewidth=1.5,
+        label=f"recommended = {recommended_threshold:.4f}",
+    )
+    ax.set_title("Business Cost Analysis (Validation)")
+    ax.set_xlabel("Threshold")
+    ax.set_ylabel("Cost / metric")
+    ax.set_xlim(0.0, 1.0)
+    ax.grid(alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
 def main() -> int:
     args = parse_args()
     _validate_positive_int(args.top_n, name="top_n")
 
-    curves_payload, native_importance_payload, permutation_importance_payload = _load_required_artifacts(
-        args.artifact_dir
-    )
+    (
+        curves_payload,
+        native_importance_payload,
+        permutation_importance_payload,
+        threshold_selection_payload,
+        cost_analysis_payload,
+    ) = _load_required_artifacts(args.artifact_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     pr_curve_path = args.output_dir / f"pr_curve_{args.partition}.png"
     roc_curve_path = args.output_dir / f"roc_curve_{args.partition}.png"
     native_importance_path = args.output_dir / f"native_importance_{args.native_importance_type}.png"
     permutation_importance_path = args.output_dir / "permutation_importance.png"
+    threshold_selection_path = args.output_dir / "threshold_selection_validation.png"
+    cost_analysis_path = args.output_dir / "cost_analysis_validation.png"
 
     _plot_precision_recall_curve(
         payload=curves_payload,
@@ -282,11 +378,25 @@ def main() -> int:
         top_n=args.top_n,
         output_path=permutation_importance_path,
     )
+    if threshold_selection_payload is not None:
+        _plot_threshold_selection(
+            payload=threshold_selection_payload,
+            output_path=threshold_selection_path,
+        )
+    if cost_analysis_payload is not None:
+        _plot_cost_analysis(
+            payload=cost_analysis_payload,
+            output_path=cost_analysis_path,
+        )
 
     print(f"Rendered: {pr_curve_path}")
     print(f"Rendered: {roc_curve_path}")
     print(f"Rendered: {native_importance_path}")
     print(f"Rendered: {permutation_importance_path}")
+    if threshold_selection_payload is not None:
+        print(f"Rendered: {threshold_selection_path}")
+    if cost_analysis_payload is not None:
+        print(f"Rendered: {cost_analysis_path}")
     return 0
 
 
