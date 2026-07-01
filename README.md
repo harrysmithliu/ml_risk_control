@@ -83,6 +83,22 @@ The planned Streamlit application includes:
 
 The interface does not request names or direct personally identifiable information.
 
+### Current Local Streamlit Demo
+
+The current Stage 6 local app already supports single-applicant scoring with artifact-backed threshold decisions and lightweight interpretation output.
+
+Low-risk example:
+
+![Low-risk Streamlit example](reports/screenshots/11.png)
+
+This example shows a low predicted delinquency probability, with both the F1-oriented threshold and the cost-oriented threshold remaining in the `Pass` state.
+
+Higher-risk example:
+
+![Higher-risk Streamlit example](reports/screenshots/22.png)
+
+This example shows the same interface responding to a riskier delinquency profile, where the predicted probability moves into the `High` band and both threshold decisions switch to `Flag`.
+
 ## Snowflake Layout
 
 Snowflake is organized into four logical layers:
