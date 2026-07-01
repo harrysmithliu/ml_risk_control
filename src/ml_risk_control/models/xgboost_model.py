@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +144,7 @@ class XGBoostCreditRiskModel:
             "row_count": int(len(dataframe)),
             "positive_rate": float((y_train == 1).mean()),
             "eval_row_count": eval_row_count,
-            "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+            "trained_at_utc": datetime.now(UTC).isoformat(),
             "classifier_class": classifier.__class__.__name__,
             "best_iteration": self._get_optional_attribute("best_iteration"),
             "best_score": self._get_optional_attribute("best_score"),

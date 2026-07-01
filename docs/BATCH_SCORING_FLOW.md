@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This document defines the intended local batch-scoring workflow that follows the current single-applicant Streamlit demo. It describes the expected input contract, validation behavior, scoring outputs, UI flow, and near-term implementation boundary for batch inference.
+This document defines the current local batch-scoring workflow that follows the single-applicant Streamlit demo. It describes the implemented input contract, validation behavior, scoring outputs, UI flow, and current implementation boundary for batch inference.
 
 The goal is to extend the current local artifact-backed scoring path from one applicant at a time to many applicants in a single upload, while preserving the same preprocessing and model-selection assumptions already used in local single-record inference.
 
 ## Scope
 
-The planned batch-scoring flow is intended to cover:
+The current batch-scoring flow covers:
 
 - CSV upload for multiple applicant records
 - schema validation before scoring
@@ -16,7 +16,7 @@ The planned batch-scoring flow is intended to cover:
 - downloadable prediction output
 - lightweight summary metrics for the scored batch
 
-The planned flow is not intended to cover:
+The current flow does not cover:
 
 - real-time API serving
 - asynchronous job orchestration
@@ -34,7 +34,7 @@ The current Stage 6 local app already supports:
 - threshold-based decisions
 - model diagnostic visuals
 
-The next batch-scoring step should build on the same local inference foundation rather than introducing a separate serving stack.
+The current batch-scoring implementation builds on the same local inference foundation rather than introducing a separate serving stack.
 
 Target direction:
 
@@ -46,9 +46,9 @@ CSV upload
   -> result summary + downloadable output
 ```
 
-## Planned User Experience
+## Current User Experience
 
-The intended batch-scoring experience should let a local user:
+The current batch-scoring experience lets a local user:
 
 1. open the Streamlit app
 2. navigate to a batch-scoring section
@@ -62,7 +62,7 @@ This should feel like a practical internal review tool rather than a notebook-on
 
 ## Input File Contract
 
-The planned upload contract should be aligned with the current raw model feature fields used by the single-applicant flow.
+The current upload contract is aligned with the raw model feature fields used by the single-applicant flow.
 
 Required input columns:
 
@@ -91,7 +91,7 @@ The batch path should use the same raw feature contract as the single-applicant 
 
 ## Validation Rules
 
-Before scoring, the batch path should validate:
+Before scoring, the batch path validates:
 
 - file readability
 - CSV shape
@@ -108,9 +108,9 @@ The same semantic rules already used in the local inference service should apply
 - support for blank `NumberOfDependents`
 - clipping based on the saved feature schema
 
-## Planned Validation Outcomes
+## Validation Outcomes
 
-The batch flow should distinguish between:
+The current batch flow distinguishes between:
 
 ### 1. File-level blocking errors
 
@@ -131,12 +131,7 @@ Examples:
 - non-numeric content in numeric columns
 - non-integer-like counts such as `1.5`
 
-Two future handling strategies are possible:
-
-- fail the full upload if any row is invalid
-- or partition the file into valid and invalid subsets
-
-For the first implementation, the recommended behavior is:
+The current behavior is:
 
 - fail closed on invalid rows
 - show a concise validation summary
@@ -144,9 +139,9 @@ For the first implementation, the recommended behavior is:
 
 This keeps the first version simpler and reduces ambiguity about partial outputs.
 
-## Planned Inference Behavior
+## Current Inference Behavior
 
-The batch path should load the same local artifact bundle already used by single-record scoring:
+The batch path loads the same local artifact bundle already used by single-record scoring:
 
 - `artifacts/xgboost/xgboost_credit_risk.joblib`
 - `feature_schema.json`
@@ -155,20 +150,20 @@ The batch path should load the same local artifact bundle already used by single
 - `cost_analysis_report.json`
 - `calibration_report.json`
 
-For every valid input row, the batch-scoring output should include at least:
+For every valid input row, the batch-scoring output includes:
 
 - predicted delinquency probability
 - risk band
 - F1 threshold decision
 - cost threshold decision
 
-The implementation should avoid any separate preprocessing logic for batch mode. The same feature contract and scoring path must be reused to minimize train-serving skew.
+The implementation avoids any separate preprocessing logic for batch mode. The same feature contract and scoring path is reused to minimize train-serving skew.
 
-## Planned Output File
+## Current Output File
 
-The recommended downloadable output file should preserve the uploaded records and append prediction-oriented fields.
+The downloadable output file preserves the uploaded records and appends prediction-oriented fields.
 
-Suggested output columns:
+Current output columns append these scoring fields:
 
 - original uploaded columns
 - `predicted_probability`
@@ -179,17 +174,17 @@ Suggested output columns:
 - `cost_threshold`
 - `selected_candidate_source`
 
-Optional future metadata columns:
+Optional future metadata columns may include:
 
 - `model_version`
 - `schema_version`
 - `scored_at_utc`
 
-## Planned Batch Summary Readout
+## Current Batch Summary Readout
 
-The Streamlit batch section should show a compact summary after scoring completes.
+The Streamlit batch section shows a compact summary after scoring completes.
 
-Recommended first summary fields:
+Current summary fields include:
 
 - uploaded row count
 - successfully scored row count
@@ -200,28 +195,20 @@ Recommended first summary fields:
 - count flagged under F1 threshold
 - count flagged under cost threshold
 
-Recommended first visuals:
+Current visuals include:
 
-- probability histogram
+- predicted-probability bar view across scored rows
 - risk-band distribution bar chart
 
 These outputs should keep the batch view lightweight while making the result set easier to inspect than a raw download alone.
 
-## Planned Streamlit UX Structure
+## Current Streamlit UX Structure
 
-The batch-scoring section can be implemented either:
+The batch-scoring section currently lives in the single-page app, though it could later be extracted into a dedicated page.
 
-- as a dedicated section in the current single-page app
-- or as a separate page in a future multi-page Streamlit layout
+The current implementation keeps it in the existing app layout below the single-applicant flow. That keeps the demo lightweight and avoids restructuring the whole app before the batch feature is proven useful.
 
-For the first implementation, the preferred approach is:
-
-- keep it in the current app
-- place it below or beside the single-applicant flow
-
-That choice keeps Stage 7 lightweight and avoids restructuring the whole app before batch functionality is proven useful.
-
-Recommended UI blocks:
+Current UI blocks:
 
 1. Upload panel
 2. Validation summary
@@ -231,16 +218,16 @@ Recommended UI blocks:
 
 ## Suggested Module Layout
 
-The current codebase can extend naturally with a small batch-scoring layer.
+The current codebase now includes a small batch-scoring layer.
 
-Suggested additions:
+Implemented additions:
 
 ```text
 src/ml_risk_control/inference/batch.py
 tests/unit/test_batch_inference.py
 ```
 
-Suggested responsibilities:
+Current responsibilities:
 
 - `batch.py`
   - uploaded dataframe validation
@@ -254,17 +241,17 @@ Suggested responsibilities:
 
 ## Relationship to Later Snowflake Work
 
-The batch-scoring flow should be designed so that local CSV scoring can later evolve into:
+The batch-scoring flow is intentionally designed so that local CSV scoring can later evolve into:
 
 - Snowflake-backed feature pulls
 - prediction writeback into `SERVING`
 - audit logging for model version and scoring time
 
-However, the first batch-scoring implementation should remain fully local and should not depend on live Snowflake access.
+However, the current implementation remains fully local and does not depend on live Snowflake access.
 
 ## First Implementation Boundary
 
-The recommended first Stage 7 boundary is:
+The current Stage 7 boundary is:
 
 - CSV upload only
 - local scoring only
@@ -272,7 +259,7 @@ The recommended first Stage 7 boundary is:
 - downloadable CSV output
 - lightweight result summary
 
-The first implementation should not attempt:
+The current implementation does not attempt:
 
 - chunked processing for very large files
 - background jobs
@@ -282,7 +269,7 @@ The first implementation should not attempt:
 
 ## Testing Expectations
 
-The batch-scoring flow should add at least the following test coverage:
+The batch-scoring flow currently includes or targets the following test coverage:
 
 - required-column validation
 - invalid-row rejection
@@ -294,7 +281,7 @@ UI-level testing can remain lightweight as long as service-level behavior is wel
 
 ## Recommended Delivery Sequence
 
-The next implementation pass should proceed in this order:
+The implemented delivery sequence followed this order:
 
 1. add the batch-scoring service layer
 2. add unit tests for batch validation and output shape
@@ -302,11 +289,11 @@ The next implementation pass should proceed in this order:
 4. add downloadable export behavior
 5. update README and demo documentation
 
-This sequencing keeps the scoring contract stable before UI behavior becomes more complex.
+That sequencing keeps the scoring contract stable before UI behavior becomes more complex.
 
 ## Completion Standard
 
-The future batch-scoring implementation should be considered complete when:
+The current batch-scoring implementation should be considered complete when:
 
 - a valid CSV upload can be scored locally
 - invalid files fail with clear messages
@@ -314,4 +301,4 @@ The future batch-scoring implementation should be considered complete when:
 - the batch summary view renders correctly
 - the logic is covered by direct tests
 
-That is the intended closure point for the next app-facing stage after the current single-applicant local demo.
+That is the practical closure point for the batch-scoring extension that follows the single-applicant local demo.

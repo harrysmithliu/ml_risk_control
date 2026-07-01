@@ -20,8 +20,8 @@ The design is intentionally lightweight: it uses a modular monolith and Docker i
 - Original-distribution, class-weighted, and SMOTE imbalance experiments.
 - PR-AUC, ROC-AUC, KS, calibration, lift, and business-cost evaluation.
 - Probability calibration and validation-driven threshold selection.
-- XGBoost native diagnostics, permutation importance, and SHAP explanations.
-- Interactive portfolio, model-performance, single-scoring, and batch-scoring pages.
+- XGBoost native diagnostics and held-out permutation importance artifacts.
+- Interactive Streamlit demo for model diagnostics, single-applicant scoring, and batch scoring.
 - Versioned model artifacts and prediction audit metadata.
 - Docker packaging and GitHub Actions quality gates.
 
@@ -41,7 +41,7 @@ The UCI [Default of Credit Card Clients](https://archive.ics.uci.edu/dataset/350
 | Pipelines and evaluation | Scikit-Learn, imbalanced-learn |
 | Champion model | XGBoost |
 | Challenger model | PyTorch |
-| Explainability | SHAP, permutation importance |
+| Explainability | Permutation importance, XGBoost native importance |
 | Application and charts | Streamlit, Plotly, Matplotlib/Seaborn |
 | Data platform | Snowflake |
 | Testing and quality | Pytest, Ruff |
@@ -61,7 +61,7 @@ flowchart LR
     F --> G["Versioned model bundle"]
     G --> H["Streamlit application"]
     H --> I["Snowflake predictions and monitoring data"]
-    F --> J["SHAP and permutation reports"]
+    F --> J["Native and permutation reports"]
 ```
 
 ## Modeling Approach
@@ -70,16 +70,16 @@ Accuracy is not used to select the model because serious delinquency is a minori
 
 XGBoost is evaluated with the original class distribution, `scale_pos_weight`, and SMOTE. SMOTE is applied only inside training folds; validation and test sets retain the real class distribution. The winning model is calibrated where beneficial, and its operating threshold is selected on validation data rather than defaulting to 0.5.
 
-Native XGBoost gain, weight, and cover are treated as diagnostics only. Final model inspection combines repeated held-out permutation importance with SHAP global and local explanations. Correlated features and explanation stability are analyzed explicitly, and explanations are described as model attribution rather than causality.
+Native XGBoost gain, weight, and cover are treated as diagnostics only. The current model inspection layer combines repeated held-out permutation importance with native XGBoost importance views. SHAP remains a planned extension rather than a completed current artifact.
 
 ## Application Experience
 
-The planned Streamlit application includes:
+The current Streamlit application includes:
 
-- **Portfolio Overview:** target balance, data quality, missingness, distributions, and correlations.
-- **Model Performance:** model comparison, PR/ROC curves, calibration, confusion matrix, lift, threshold economics, and global explanations.
-- **Single Applicant:** validated inputs, calibrated probability, demo risk band, threshold context, and local SHAP explanation.
-- **Batch Scoring:** schema-validated CSV upload, downloadable predictions, distribution summary, and optional Snowflake writeback.
+- **Application Status:** selected candidate source, threshold values, and calibration context.
+- **Single Applicant:** validated inputs, calibrated probability, demo risk band, and threshold-aware decisions.
+- **Batch Scoring:** schema-validated CSV upload, downloadable predictions, and compact batch summaries.
+- **Model Diagnostics:** persisted PR/ROC, native importance, permutation importance, threshold-selection, and cost-analysis visuals.
 
 The interface does not request names or direct personally identifiable information.
 
@@ -102,7 +102,7 @@ Local CSV/Parquet and Snowflake access implement the same repository interface s
 ├── app/                 # Streamlit pages and components
 ├── configs/             # Versioned model and runtime configuration
 ├── data/                # Local data; ignored by Git
-├── docs/                # Requirements, model card, data dictionary, runbook
+├── docs/                # Requirements, data, model, runbook, and app workflow docs
 ├── notebooks/           # Exploration only
 ├── scripts/             # Download, preparation, training, evaluation, loading
 ├── sql/                 # Snowflake DDL and monitoring views
@@ -115,9 +115,9 @@ Local CSV/Parquet and Snowflake access implement the same repository interface s
 
 Production logic belongs in `src/`; notebooks must import shared modules rather than becoming an alternative implementation.
 
-## Planned Local Workflow
+## Local Workflow
 
-Once implementation is complete, the standard workflow will be exposed through Make targets or equivalent commands:
+The current repository already exposes a working local command surface through `Makefile` targets:
 
 ```bash
 make setup
@@ -129,19 +129,31 @@ make app
 make test
 ```
 
-Container execution will be available through:
+Command meanings:
+
+- `make setup` installs the project into `.venv`
+- `make data` validates the raw Kaggle files
+- `make eda` regenerates the EDA summary and charts
+- `make train` runs the current XGBoost training workflow
+- `make evaluate` renders model diagnostic figures from persisted artifacts
+- `make app` starts the current Streamlit application
+- `make test` runs the current automated test suite
+
+Container execution is also available through:
 
 ```bash
 docker compose up --build
 ```
 
-Snowflake credentials and other secrets will be supplied externally. `.env.example` will document required variable names without storing credentials.
+Before container startup, generate the local model bundle with `make train` and `make evaluate`. The Compose setup mounts local `artifacts/`, `reports/`, and `data/raw/` into the container so the packaged Streamlit app can reuse the same locally generated diagnostics and inference assets on port `8501`.
+
+Snowflake credentials and other secrets must still be supplied externally. `.env.example` documents the expected variable names without storing credentials.
 
 ## Quality and Reproducibility
 
 The final model bundle records the preprocessing pipeline, feature schema, model configuration, calibration state, thresholds, risk bands, metrics, dependency versions, random seeds, training time, and data fingerprint.
 
-CI validates linting, unit and integration tests, a lightweight training smoke test, and the Docker build. Tests do not require live Snowflake credentials by default.
+GitHub Actions validates linting, unit and integration tests, import-level smoke coverage, and the Docker build. Tests do not require live Snowflake credentials by default.
 
 ## Exploratory Data Analysis
 
@@ -284,6 +296,6 @@ Application and local demo documents:
 
 - The benchmark dataset is anonymized and lacks a reliable time field.
 - Results do not constitute regulatory model validation.
-- SHAP and permutation importance explain model behavior, not causal relationships.
+- Permutation importance and any future explainability outputs describe model behavior, not causal relationships.
 - Demo thresholds and risk bands are not lending policy.
 - The project must not be used for real customer decisions.

@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -1001,7 +1001,7 @@ def _compute_permutation_importance(
     for feature_name in feature_names:
         permuted_metric_values: list[float] = []
         importance_values: list[float] = []
-        for repeat_index in range(n_repeats):
+        for _repeat_index in range(n_repeats):
             permuted_frame = evaluation_frame.copy()
             shuffle_seed = generator.randint(0, 10**9)
             permuted_values = (

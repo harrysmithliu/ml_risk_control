@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +93,7 @@ class LogisticRegressionBaseline:
         self.training_summary_ = {
             "row_count": int(len(dataframe)),
             "positive_rate": float((y == 1).mean()),
-            "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+            "trained_at_utc": datetime.now(UTC).isoformat(),
             "classifier_class": classifier.__class__.__name__,
         }
         return self

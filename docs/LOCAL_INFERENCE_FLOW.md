@@ -8,16 +8,16 @@ The current application is a local artifact-backed demo layer. It does not call 
 
 ## Scope
 
-The current local inference flow covers:
+This document focuses on the single-applicant local inference flow, which covers:
 
 - loading the persisted Stage 5 XGBoost artifact bundle
 - validating a single applicant input record
 - scoring the applicant in-process
 - displaying probability, threshold decisions, and diagnostic charts in Streamlit
 
-The current flow does not cover:
+This document does not cover:
 
-- batch scoring
+- batch scoring, which is documented separately in `docs/BATCH_SCORING_FLOW.md`
 - online feedback capture
 - live database reads or writes
 - production authentication

@@ -2,15 +2,16 @@ PYTHON ?= .venv/bin/python
 PIP ?= $(PYTHON) -m pip
 STREAMLIT ?= $(PYTHON) -m streamlit
 
-APP_ENTRY ?= app/Home.py
+APP_ENTRY ?= streamlit_app.py
 DATA_SCRIPT ?= scripts/validate_raw_data.py
 EDA_SCRIPT ?= scripts/run_eda.py
-TRAIN_SCRIPT ?= scripts/train_baseline.py
-EVALUATE_SCRIPT ?= scripts/evaluate_models.py
+BASELINE_TRAIN_SCRIPT ?= scripts/train_baseline.py
+TRAIN_SCRIPT ?= scripts/train_xgboost.py
+EVALUATE_SCRIPT ?= scripts/render_model_figures.py
 
 .DEFAULT_GOAL := help
 
-.PHONY: help ensure-venv setup install lint format test smoke data eda train evaluate app clean
+.PHONY: help ensure-venv setup install lint format test smoke data eda train train-baseline evaluate figures app clean
 
 help:
 	@printf "Available targets:\n"
@@ -23,7 +24,9 @@ help:
 	@printf "  data       Run raw data validation\n"
 	@printf "  eda        Run the initial exploratory data analysis pass\n"
 	@printf "  train      Run XGBoost model training\n"
-	@printf "  evaluate   Run evaluation and reporting\n"
+	@printf "  train-baseline Run the logistic-regression baseline training script\n"
+	@printf "  evaluate   Render model diagnostic figures from saved artifacts\n"
+	@printf "  figures    Alias for evaluate\n"
 	@printf "  app        Start the Streamlit application\n"
 	@printf "  clean      Remove common local caches\n"
 
@@ -73,12 +76,21 @@ train: ensure-venv
 	fi
 	$(PYTHON) $(TRAIN_SCRIPT)
 
+train-baseline: ensure-venv
+	@if [ ! -f "$(BASELINE_TRAIN_SCRIPT)" ]; then \
+		printf "Missing baseline training entrypoint: %s\n" "$(BASELINE_TRAIN_SCRIPT)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(BASELINE_TRAIN_SCRIPT)
+
 evaluate: ensure-venv
 	@if [ ! -f "$(EVALUATE_SCRIPT)" ]; then \
 		printf "Missing evaluation entrypoint: %s\n" "$(EVALUATE_SCRIPT)"; \
 		exit 1; \
 	fi
 	$(PYTHON) $(EVALUATE_SCRIPT)
+
+figures: evaluate
 
 app: ensure-venv
 	@if [ ! -f "$(APP_ENTRY)" ]; then \

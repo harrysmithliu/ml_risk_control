@@ -4,9 +4,9 @@ import pytest
 
 from ml_risk_control.evaluation.metrics import (
     build_confusion_matrix_payload,
-    compute_ks_statistic,
     build_precision_recall_curve_payload,
     build_roc_curve_payload,
+    compute_ks_statistic,
     evaluate_binary_classifier,
 )
 

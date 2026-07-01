@@ -20,7 +20,6 @@ from ml_risk_control.inference.service import (
     LocalXGBoostInferenceService,
 )
 
-
 st.set_page_config(
     page_title="Credit Risk Intelligence Platform",
     page_icon="📉",

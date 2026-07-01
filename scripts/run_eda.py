@@ -26,6 +26,7 @@ os.environ.setdefault("FONTCONFIG_PATH", "/opt/homebrew/etc/fonts")
 os.environ.setdefault("FONTCONFIG_FILE", "/opt/homebrew/etc/fonts/fonts.conf")
 
 import pandas as pd
+
 try:
     import matplotlib
 

@@ -13,7 +13,6 @@ from ml_risk_control.inference.service import (
     ThresholdDecision,
 )
 
-
 RAW_FEATURE_COLUMNS: tuple[str, ...] = (
     "RevolvingUtilizationOfUnsecuredLines",
     "age",

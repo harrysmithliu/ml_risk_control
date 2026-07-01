@@ -31,7 +31,7 @@ def dataset_fingerprint(file_hashes: dict[str, str]) -> str:
     """Combine per-file hashes into a stable dataset-level fingerprint."""
     digest = hashlib.sha256()
     for name, file_hash in sorted(file_hashes.items()):
-        digest.update(f"{name}:{file_hash}".encode("utf-8"))
+        digest.update(f"{name}:{file_hash}".encode())
     return digest.hexdigest()
 
 
