@@ -83,22 +83,6 @@ The planned Streamlit application includes:
 
 The interface does not request names or direct personally identifiable information.
 
-### Current Local Streamlit Demo
-
-The current Stage 6 local app already supports single-applicant scoring with artifact-backed threshold decisions and lightweight interpretation output.
-
-Low-risk example:
-
-![Low-risk Streamlit example](reports/screenshots/11.png)
-
-This example shows a low predicted delinquency probability, with both the F1-oriented threshold and the cost-oriented threshold remaining in the `Pass` state.
-
-Higher-risk example:
-
-![Higher-risk Streamlit example](reports/screenshots/22.png)
-
-This example shows the same interface responding to a riskier delinquency profile, where the predicted probability moves into the `High` band and both threshold decisions switch to `Flag`.
-
 ## Snowflake Layout
 
 Snowflake is organized into four logical layers:
@@ -227,21 +211,67 @@ Validation permutation importance:
 
 This provides a more robust held-out importance readout than raw split-count or gain-based views alone.
 
+## Current Training Workflow
+
+The current implementation now covers a full local path from validated raw data to reusable scoring artifacts.
+
+1. **Data validation and repository loading**
+   - Raw Kaggle files are validated against explicit file contracts before training.
+   - Local repository interfaces provide a clean path toward later Snowflake-backed execution.
+
+2. **Feature preparation**
+   - The shared preprocessing pipeline applies numeric coercion, bounded clipping, missing-value handling, and explicit missingness indicators.
+   - The same preprocessing logic is reused across training and local inference to reduce train-serving skew.
+
+3. **Model training progression**
+   - A logistic-regression baseline was implemented first to establish a simple benchmark and artifact contract.
+   - The current champion path uses XGBoost with early stopping, bounded parameter search, and reproducible train/validation/test splits.
+
+4. **Class-imbalance and operating-point analysis**
+   - The XGBoost workflow compares the original class distribution, `scale_pos_weight`, and SMOTE variants under a shared validation selection metric.
+   - Calibration, threshold selection, and business-cost analysis are persisted as explicit artifacts rather than being left as notebook-only analysis.
+
+5. **Artifact packaging for downstream use**
+   - The final local bundle includes the persisted model, feature schema, metric reports, curve data, importance outputs, threshold reports, and calibration metadata.
+   - These artifacts are now consumed directly by the local Streamlit application for single-applicant scoring and model diagnostics.
+
+## Current Local Streamlit Demo
+
+The current Stage 6 local app already uses these persisted artifacts to support single-applicant scoring with artifact-backed threshold decisions and lightweight interpretation output.
+
+Low-risk example:
+
+![Low-risk Streamlit example](reports/screenshots/11.png)
+
+This example shows a low predicted delinquency probability, with both the F1-oriented threshold and the cost-oriented threshold remaining in the `Pass` state.
+
+Higher-risk example:
+
+![Higher-risk Streamlit example](reports/screenshots/22.png)
+
+This example shows the same interface responding to a riskier delinquency profile, where the predicted probability moves into the `High` band and both threshold decisions switch to `Flag`.
+
 ## Documentation
 
-The operational data documents
+Data foundation documents:
 
 - [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md)
 - [docs/RUNBOOK.md](docs/RUNBOOK.md)
 
-The main EDA and data-foundation documents
+EDA and feature-design documents:
 
 - [docs/EDA_SUMMARY.md](docs/EDA_SUMMARY.md)
 - [docs/FEATURE_TREATMENT_DECISIONS.md](docs/FEATURE_TREATMENT_DECISIONS.md)
 - [docs/DATA_QUALITY_RULES.md](docs/DATA_QUALITY_RULES.md)
+
+Model artifact and evaluation documents:
+
 - [docs/MODEL_ARTIFACTS.md](docs/MODEL_ARTIFACTS.md)
 
-- `docs/MODEL_CARD.md`
+Application and local demo documents:
+
+- [docs/STREAMLIT_APP_SPEC.md](docs/STREAMLIT_APP_SPEC.md)
+- [docs/LOCAL_INFERENCE_FLOW.md](docs/LOCAL_INFERENCE_FLOW.md)
 
 ## Limitations
 
