@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from ml_risk_control.config import get_settings
+from ml_risk_control.inference.batch import (
+    BatchValidationError,
+    LocalXGBoostBatchInferenceService,
+)
 from ml_risk_control.inference.service import (
     ApplicantValidationError,
     ArtifactLoadError,
@@ -50,6 +56,14 @@ DEMO_APPLICANT: dict[str, Any] = {
 def get_inference_service() -> LocalXGBoostInferenceService:
     """Load and cache the local inference service."""
     return LocalXGBoostInferenceService().load()
+
+
+@st.cache_resource(show_spinner=False)
+def get_batch_inference_service() -> LocalXGBoostBatchInferenceService:
+    """Build and cache the local batch inference service."""
+    return LocalXGBoostBatchInferenceService(
+        single_record_service=get_inference_service()
+    )
 
 
 def _initialize_form_state() -> None:
@@ -264,6 +278,161 @@ def _render_result_section(service: LocalXGBoostInferenceService) -> None:
         )
 
 
+def _load_uploaded_batch_dataframe(uploaded_file: Any) -> pd.DataFrame:
+    file_bytes = uploaded_file.getvalue()
+    if not file_bytes:
+        msg = "Uploaded file is empty."
+        raise ValueError(msg)
+    return pd.read_csv(BytesIO(file_bytes))
+
+
+def _render_batch_scoring_section(
+    batch_service: LocalXGBoostBatchInferenceService,
+) -> None:
+    st.subheader("Batch Scoring")
+    st.caption(
+        "Upload a CSV file that contains the raw model feature columns. "
+        "Additional passthrough columns are allowed unless strict schema mode is enabled."
+    )
+
+    uploaded_file = st.file_uploader(
+        "Upload batch scoring CSV",
+        type=["csv"],
+        key="batch_scoring_upload",
+    )
+    strict_schema_mode = st.checkbox(
+        "Strict schema mode",
+        value=False,
+        help="When enabled, additional non-feature columns are rejected during validation.",
+    )
+
+    preview_frame: pd.DataFrame | None = None
+    if uploaded_file is not None:
+        try:
+            preview_frame = _load_uploaded_batch_dataframe(uploaded_file)
+        except Exception as error:
+            st.error(f"Unable to read uploaded CSV: {error}")
+        else:
+            preview_left, preview_right = st.columns([1, 1])
+            preview_left.metric("Uploaded Rows", len(preview_frame))
+            preview_right.metric("Uploaded Columns", preview_frame.shape[1])
+
+            with st.expander("Batch Input Preview", expanded=False):
+                st.dataframe(preview_frame.head(20), width="stretch")
+
+            expected_columns_text = ", ".join(batch_service.raw_feature_columns)
+            st.caption(f"Required feature columns: {expected_columns_text}")
+
+    score_batch_requested = st.button(
+        "Score Batch Upload",
+        disabled=preview_frame is None,
+        width="stretch",
+        key="score_batch_upload",
+    )
+
+    if score_batch_requested and preview_frame is not None:
+        try:
+            batch_result = batch_service.score_dataframe(
+                preview_frame,
+                allow_additional_columns=not strict_schema_mode,
+            )
+        except BatchValidationError as error:
+            st.session_state["latest_batch_validation_error"] = {
+                "message": str(error),
+                "file_errors": error.file_errors,
+                "row_errors": error.row_errors,
+            }
+            st.session_state.pop("latest_batch_result", None)
+            st.session_state["latest_batch_filename"] = uploaded_file.name
+        except Exception as error:  # pragma: no cover - defensive UI guard
+            st.session_state["latest_batch_validation_error"] = {
+                "message": f"Unexpected batch scoring error: {error}",
+                "file_errors": [],
+                "row_errors": [],
+            }
+            st.session_state.pop("latest_batch_result", None)
+            st.session_state["latest_batch_filename"] = uploaded_file.name
+        else:
+            st.session_state["latest_batch_result"] = batch_result
+            st.session_state.pop("latest_batch_validation_error", None)
+            st.session_state["latest_batch_filename"] = uploaded_file.name
+
+    validation_error = st.session_state.get("latest_batch_validation_error")
+    if validation_error is not None:
+        st.error(validation_error["message"])
+        if validation_error["file_errors"]:
+            st.markdown("**File-level validation errors**")
+            for item in validation_error["file_errors"]:
+                st.write(f"- {item}")
+        if validation_error["row_errors"]:
+            st.markdown("**Row-level validation errors**")
+            st.dataframe(
+                pd.DataFrame(validation_error["row_errors"]),
+                width="stretch",
+            )
+
+    batch_result = st.session_state.get("latest_batch_result")
+    if batch_result is None:
+        st.info("Upload a CSV file and click 'Score Batch Upload' to generate batch predictions.")
+        return
+
+    summary = batch_result.summary
+    st.markdown(
+        f"**Current batch result:** `{st.session_state.get('latest_batch_filename', 'uploaded_file.csv')}`"
+    )
+
+    summary_row_one = st.columns(4)
+    summary_row_one[0].metric("Scored Rows", summary.scored_row_count)
+    summary_row_one[1].metric(
+        "Average Probability",
+        f"{summary.average_predicted_probability:.2%}",
+    )
+    summary_row_one[2].metric(
+        "Median Probability",
+        f"{summary.median_predicted_probability:.2%}",
+    )
+    summary_row_one[3].metric(
+        "High-Risk Share",
+        f"{summary.high_risk_share:.2%}",
+    )
+
+    summary_row_two = st.columns(4)
+    summary_row_two[0].metric("High-Risk Rows", summary.high_risk_row_count)
+    summary_row_two[1].metric("F1 Threshold Flags", summary.flagged_f1_threshold_count)
+    summary_row_two[2].metric("Cost Threshold Flags", summary.flagged_cost_threshold_count)
+    summary_row_two[3].metric("Selected Candidate", summary.selected_candidate_source)
+
+    scored_records = batch_result.scored_records
+    with st.expander("Scored Batch Preview", expanded=True):
+        st.dataframe(scored_records.head(50), width="stretch")
+
+    csv_bytes = scored_records.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Scored CSV",
+        data=csv_bytes,
+        file_name="batch_scoring_output.csv",
+        mime="text/csv",
+        width="stretch",
+    )
+
+    chart_left, chart_right = st.columns(2)
+    with chart_left:
+        probability_chart = (
+            scored_records["predicted_probability"]
+            .to_frame(name="predicted_probability")
+        )
+        st.bar_chart(probability_chart, height=240)
+    with chart_right:
+        risk_distribution = (
+            scored_records["risk_band"]
+            .value_counts()
+            .rename_axis("risk_band")
+            .reset_index(name="row_count")
+            .set_index("risk_band")
+        )
+        st.bar_chart(risk_distribution, height=240)
+
+
 def _render_model_diagnostics() -> None:
     st.subheader("Model Diagnostics")
 
@@ -297,6 +466,7 @@ def main() -> None:
 
     try:
         service = get_inference_service()
+        batch_service = get_batch_inference_service()
     except ArtifactLoadError as error:
         st.error(f"Unable to load the local inference artifacts: {error}")
         st.stop()
@@ -322,6 +492,8 @@ def main() -> None:
     with layout_right:
         _render_result_section(service)
 
+    st.divider()
+    _render_batch_scoring_section(batch_service)
     st.divider()
     _render_model_diagnostics()
 

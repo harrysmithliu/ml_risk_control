@@ -251,6 +251,12 @@ Higher-risk example:
 
 This example shows the same interface responding to a riskier delinquency profile, where the predicted probability moves into the `High` band and both threshold decisions switch to `Flag`.
 
+Batch-scoring example:
+
+![Batch-scoring Streamlit example](reports/screenshots/33.png)
+
+This example shows the Stage 7 batch-scoring flow after a CSV upload, including row counts, probability summary metrics, high-risk share, prediction preview, and downloadable scored output.
+
 ## Documentation
 
 Data foundation documents:
@@ -272,6 +278,7 @@ Application and local demo documents:
 
 - [docs/STREAMLIT_APP_SPEC.md](docs/STREAMLIT_APP_SPEC.md)
 - [docs/LOCAL_INFERENCE_FLOW.md](docs/LOCAL_INFERENCE_FLOW.md)
+- [docs/BATCH_SCORING_FLOW.md](docs/BATCH_SCORING_FLOW.md)
 
 ## Limitations
 
