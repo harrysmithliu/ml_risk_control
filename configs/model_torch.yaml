@@ -1,0 +1,46 @@
+metadata:
+  model_name: torch_mlp_challenger
+  model_family: pytorch_mlp
+  model_role: challenger
+  model_version: 0.1.0
+  schema_version: 1.0.0
+  stage: stage_7
+  owner: ml_risk_control
+
+runtime:
+  device: cpu
+  random_state: 42
+
+training:
+  hidden_dims:
+    - 64
+    - 32
+  dropout: 0.10
+  learning_rate: 0.001
+  batch_size: 512
+  max_epochs: 50
+  patience: 8
+  min_delta: 0.0001
+  weight_decay: 0.0001
+  positive_class_weight_strategy: auto_from_train_ratio
+  positive_class_weight_value: null
+  threshold: 0.5
+
+artifacts:
+  output_dir: artifacts/torch
+  model_file: torch_mlp_challenger.pt
+  config_snapshot_file: torch_config_snapshot.json
+  feature_schema_file: feature_schema.json
+  split_metadata_file: split_metadata.json
+  metrics_file: torch_metrics.json
+  run_summary_file: run_summary.json
+  training_history_file: training_history.json
+  evaluation_rows:
+    - train
+    - validation
+    - test
+
+guardrails:
+  require_finite_probabilities: true
+  require_complete_metadata: true
+  require_reload_check: true

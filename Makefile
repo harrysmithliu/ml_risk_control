@@ -7,11 +7,12 @@ DATA_SCRIPT ?= scripts/validate_raw_data.py
 EDA_SCRIPT ?= scripts/run_eda.py
 BASELINE_TRAIN_SCRIPT ?= scripts/train_baseline.py
 TRAIN_SCRIPT ?= scripts/train_xgboost.py
+TORCH_TRAIN_SCRIPT ?= scripts/train_torch.py
 EVALUATE_SCRIPT ?= scripts/render_model_figures.py
 
 .DEFAULT_GOAL := help
 
-.PHONY: help ensure-venv setup install lint format test smoke data eda train train-baseline evaluate figures app clean
+.PHONY: help ensure-venv setup install lint format test smoke data eda train train-baseline train-torch evaluate figures app clean
 
 help:
 	@printf "Available targets:\n"
@@ -25,6 +26,7 @@ help:
 	@printf "  eda        Run the initial exploratory data analysis pass\n"
 	@printf "  train      Run XGBoost model training\n"
 	@printf "  train-baseline Run the logistic-regression baseline training script\n"
+	@printf "  train-torch Run the PyTorch challenger training script\n"
 	@printf "  evaluate   Render model diagnostic figures from saved artifacts\n"
 	@printf "  figures    Alias for evaluate\n"
 	@printf "  app        Start the Streamlit application\n"
@@ -82,6 +84,13 @@ train-baseline: ensure-venv
 		exit 1; \
 	fi
 	$(PYTHON) $(BASELINE_TRAIN_SCRIPT)
+
+train-torch: ensure-venv
+	@if [ ! -f "$(TORCH_TRAIN_SCRIPT)" ]; then \
+		printf "Missing PyTorch training entrypoint: %s\n" "$(TORCH_TRAIN_SCRIPT)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(TORCH_TRAIN_SCRIPT)
 
 evaluate: ensure-venv
 	@if [ ! -f "$(EVALUATE_SCRIPT)" ]; then \
