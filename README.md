@@ -197,7 +197,7 @@ Most observations are concentrated at zero, but the extreme-value scan also iden
 
 The current XGBoost workflow now persists evaluation-ready artifacts for validation curves, class-imbalance comparison, native feature importance, and permutation importance. The latest local run kept the `reference` candidate as the selected saved model after comparing it against both a bounded tuning search and an automatic `scale_pos_weight` variant.
 
-The artifact details and interpretation notes are documented in [docs/MODEL_ARTIFACTS.md](docs/MODEL_ARTIFACTS.md). The current versioned model figures are stored under `reports/figures/model/`.
+The artifact details and interpretation notes are documented in [docs/MODEL_ARTIFACTS.md](docs/MODEL_ARTIFACTS.md). The current cross-model ranking is summarized in [docs/MODEL_COMPARISON.md](docs/MODEL_COMPARISON.md), and the champion usage / limitation summary is recorded in [docs/MODEL_CARD.md](docs/MODEL_CARD.md). The current versioned model figures are stored under `reports/figures/model/`.
 
 Validation Precision-Recall curve:
 
@@ -285,6 +285,11 @@ EDA and feature-design documents:
 Model artifact and evaluation documents:
 
 - [docs/MODEL_ARTIFACTS.md](docs/MODEL_ARTIFACTS.md)
+- [docs/MODEL_COMPARISON.md](docs/MODEL_COMPARISON.md)
+
+Model governance documents:
+
+- [docs/MODEL_CARD.md](docs/MODEL_CARD.md)
 
 Application and local demo documents:
 

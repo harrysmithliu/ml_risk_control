@@ -9,10 +9,11 @@ BASELINE_TRAIN_SCRIPT ?= scripts/train_baseline.py
 TRAIN_SCRIPT ?= scripts/train_xgboost.py
 TORCH_TRAIN_SCRIPT ?= scripts/train_torch.py
 EVALUATE_SCRIPT ?= scripts/render_model_figures.py
+COMPARE_SCRIPT ?= scripts/compare_models.py
 
 .DEFAULT_GOAL := help
 
-.PHONY: help ensure-venv setup install lint format test smoke data eda train train-baseline train-torch evaluate figures app clean
+.PHONY: help ensure-venv setup install lint format test smoke data eda train train-baseline train-torch compare-models evaluate figures app clean
 
 help:
 	@printf "Available targets:\n"
@@ -27,6 +28,7 @@ help:
 	@printf "  train      Run XGBoost model training\n"
 	@printf "  train-baseline Run the logistic-regression baseline training script\n"
 	@printf "  train-torch Run the PyTorch challenger training script\n"
+	@printf "  compare-models Build the persisted model comparison report and champion rationale\n"
 	@printf "  evaluate   Render model diagnostic figures from saved artifacts\n"
 	@printf "  figures    Alias for evaluate\n"
 	@printf "  app        Start the Streamlit application\n"
@@ -91,6 +93,13 @@ train-torch: ensure-venv
 		exit 1; \
 	fi
 	$(PYTHON) $(TORCH_TRAIN_SCRIPT)
+
+compare-models: ensure-venv
+	@if [ ! -f "$(COMPARE_SCRIPT)" ]; then \
+		printf "Missing comparison entrypoint: %s\n" "$(COMPARE_SCRIPT)"; \
+		exit 1; \
+	fi
+	$(PYTHON) $(COMPARE_SCRIPT)
 
 evaluate: ensure-venv
 	@if [ ! -f "$(EVALUATE_SCRIPT)" ]; then \
